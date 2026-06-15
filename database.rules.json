@@ -1,0 +1,31 @@
+{
+  "rules": {
+    "channels": {
+      "$channelName": {
+        ".read": "auth != null",
+        ".write": "auth != null",
+        "meta": {
+          ".validate": "newData.hasChildren(['passwordHash', 'createdAt'])"
+        },
+        "slots": {
+          "slot1": {
+            ".validate": "newData.hasChildren(['nick', 'sessionId', 'online', 'lastSeen'])"
+          },
+          "slot2": {
+            ".validate": "newData.hasChildren(['nick', 'sessionId', 'online', 'lastSeen'])"
+          }
+        },
+        "liveTyping": {
+          "$slotId": {
+            ".validate": "newData.isString()"
+          }
+        },
+        "messages": {
+          "$messageId": {
+            ".validate": "newData.hasChildren(['senderNick', 'text', 'timestamp'])"
+          }
+        }
+      }
+    }
+  }
+}

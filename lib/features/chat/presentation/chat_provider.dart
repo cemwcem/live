@@ -1,0 +1,37 @@
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+
+import '../../../core/models/channel_model.dart';
+import '../../../core/models/message_model.dart';
+import '../../auth/domain/auth_service.dart';
+import '../data/chat_repository.dart';
+import '../domain/chat_service.dart';
+
+final chatRepositoryProvider = Provider<ChatRepository>((ref) {
+  return FirebaseChatRepository();
+});
+
+final chatServiceProvider = Provider<ChatService>((ref) {
+  return ChatService(ref.watch(chatRepositoryProvider));
+});
+
+final chatChannelProvider = StreamProvider.family<ChannelModel?, ChannelSession>((ref, session) {
+  return ref.watch(chatServiceProvider).watchChannel(session.channelName);
+});
+
+final chatMessagesProvider = StreamProvider.family<List<MessageModel>, ChannelSession>((ref, session) {
+  return ref.watch(chatServiceProvider).watchMessages(session.channelName);
+});
+
+final chatTypingProvider = StreamProvider.family<String?, ({String channelName, String slotId})>((ref, params) {
+  return ref.watch(chatServiceProvider).watchTyping(
+        channelName: params.channelName,
+        slotId: params.slotId,
+      );
+});
+
+final chatOnlineProvider = StreamProvider.family<bool?, ({String channelName, String slotId})>((ref, params) {
+  return ref.watch(chatServiceProvider).watchSlotOnline(
+        channelName: params.channelName,
+        slotId: params.slotId,
+      );
+});
