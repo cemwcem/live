@@ -14,6 +14,9 @@ class LiveTypingBox extends StatelessWidget {
     required this.helperText,
     required this.compact,
     this.onSend,
+    this.textTransformer,
+    this.showSendButton = true,
+    this.showHeader = true,
   });
 
   final String label;
@@ -27,6 +30,9 @@ class LiveTypingBox extends StatelessWidget {
   final bool sendEnabled;
   final String helperText;
   final bool compact;
+  final String Function(String text)? textTransformer;
+  final bool showSendButton;
+  final bool showHeader;
 
   @override
   Widget build(BuildContext context) {
@@ -41,31 +47,42 @@ class LiveTypingBox extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Text(label, style: Theme.of(context).textTheme.titleSmall),
-              Container(
-                padding: EdgeInsets.symmetric(horizontal: compact ? 8 : 10, vertical: compact ? 4 : 6),
-                decoration: BoxDecoration(
-                  color: badgeColor.withValues(alpha: 0.15),
-                  borderRadius: BorderRadius.circular(999),
+          if (showHeader) ...[
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Text(label, style: Theme.of(context).textTheme.titleSmall),
+                Container(
+                  padding: EdgeInsets.symmetric(horizontal: compact ? 8 : 10, vertical: compact ? 4 : 6),
+                  decoration: BoxDecoration(
+                    color: badgeColor.withValues(alpha: 0.15),
+                    borderRadius: BorderRadius.circular(999),
+                  ),
+                  child: Text(
+                    badgeLabel,
+                    style: TextStyle(color: badgeColor, fontWeight: FontWeight.w600),
+                  ),
                 ),
-                child: Text(
-                  badgeLabel,
-                  style: TextStyle(color: badgeColor, fontWeight: FontWeight.w600),
-                ),
-              ),
-            ],
-          ),
-          SizedBox(height: compact ? 8 : 12),
+              ],
+            ),
+            SizedBox(height: compact ? 8 : 12),
+          ],
           TextField(
             controller: controller,
             enabled: enabled,
             readOnly: readOnly,
             minLines: compact ? 1 : 3,
             maxLines: compact ? 2 : 5,
-            onChanged: onChanged,
+            onChanged: (value) {
+              final transformed = textTransformer?.call(value) ?? value;
+              if (transformed != value) {
+                controller.value = TextEditingValue(
+                  text: transformed,
+                  selection: TextSelection.collapsed(offset: transformed.length),
+                );
+              }
+              onChanged(transformed);
+            },
             decoration: InputDecoration(
               hintText: 'Canli yazi burada akar',
               isDense: compact,
@@ -78,17 +95,16 @@ class LiveTypingBox extends StatelessWidget {
             ),
             onSubmitted: sendEnabled ? (_) => onSend?.call() : null,
           ),
-          SizedBox(height: compact ? 6 : 8),
-          Align(
-            alignment: Alignment.centerRight,
-            child: Tooltip(
-              message: sendEnabled ? 'Gönder' : helperText,
+          if (showSendButton) ...[
+            SizedBox(height: compact ? 6 : 8),
+            Align(
+              alignment: Alignment.centerRight,
               child: FilledButton(
                 onPressed: sendEnabled ? onSend : null,
                 child: const Text('Gönder'),
               ),
             ),
-          ),
+          ],
         ],
       ),
     );

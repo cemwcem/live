@@ -30,6 +30,20 @@ class ChatService {
     );
   }
 
+  Future<void> acknowledgeMessages({
+    required String channelName,
+    required String slotId,
+    required List<String> messageIds,
+    bool markRead = true,
+  }) {
+    return _repository.acknowledgeMessages(
+      channelName: channelName,
+      slotId: slotId,
+      messageIds: messageIds,
+      markRead: markRead,
+    );
+  }
+
   Future<void> updateTyping({
     required String channelName,
     required String slotId,

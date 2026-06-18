@@ -16,6 +16,13 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
   final _passwordController = TextEditingController();
   final _channelController = TextEditingController();
 
+  void _submitIfPossible(LoginState state, LoginController controller) {
+    if (state.isSubmitting) {
+      return;
+    }
+    controller.submit();
+  }
+
   @override
   void initState() {
     super.initState();
@@ -79,12 +86,14 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                     TextField(
                       controller: _nickController,
                       decoration: const InputDecoration(labelText: 'User'),
+                      textInputAction: TextInputAction.next,
                       onChanged: controller.updateNick,
                     ),
                     const SizedBox(height: 12),
                     TextField(
                       controller: _channelController,
                       decoration: const InputDecoration(labelText: 'Channel'),
+                      textInputAction: TextInputAction.next,
                       onChanged: controller.updateChannelName,
                     ),
                     const SizedBox(height: 12),
@@ -92,7 +101,9 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                       controller: _passwordController,
                       decoration: const InputDecoration(labelText: 'Password'),
                       obscureText: true,
+                      textInputAction: TextInputAction.go,
                       onChanged: controller.updatePassword,
+                      onSubmitted: (_) => _submitIfPossible(state, controller),
                     ),
                     const SizedBox(height: 16),
                     if (state.errorMessage != null)

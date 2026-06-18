@@ -2,6 +2,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/models/channel_model.dart';
 import '../../../core/models/message_model.dart';
+import '../../../core/models/slot_model.dart';
 import '../../auth/domain/auth_service.dart';
 import '../data/chat_repository.dart';
 import '../domain/chat_service.dart';
@@ -31,6 +32,13 @@ final chatTypingProvider = StreamProvider.family<String?, ({String channelName, 
 
 final chatOnlineProvider = StreamProvider.family<bool?, ({String channelName, String slotId})>((ref, params) {
   return ref.watch(chatServiceProvider).watchSlotOnline(
+        channelName: params.channelName,
+        slotId: params.slotId,
+      );
+});
+
+final chatSlotProvider = StreamProvider.family<SlotModel?, ({String channelName, String slotId})>((ref, params) {
+  return ref.watch(chatServiceProvider).watchSlot(
         channelName: params.channelName,
         slotId: params.slotId,
       );

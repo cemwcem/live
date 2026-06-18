@@ -22,7 +22,7 @@
         },
         "messages": {
           "$messageId": {
-            ".validate": "newData.hasChildren(['senderNick', 'text', 'timestamp'])"
+            ".validate": "newData.hasChildren(['senderNick', 'senderSlotId', 'text', 'timestamp', 'deliveredSlots', 'readSlots'])"
           }
         }
       }

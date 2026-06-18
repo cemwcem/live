@@ -22,6 +22,12 @@ abstract class ChatRepository {
     required String nick,
     required String text,
   });
+  Future<void> acknowledgeMessages({
+    required String channelName,
+    required String slotId,
+    required List<String> messageIds,
+    bool markRead,
+  });
   Future<void> updateTyping({
     required String channelName,
     required String slotId,
@@ -167,10 +173,46 @@ class FirebaseChatRepository implements ChatRepository {
     final now = DateTime.now().millisecondsSinceEpoch;
     await messageRef.set({
       'senderNick': nick,
+      'senderSlotId': slotId,
       'text': text,
       'timestamp': now,
+      'deliveredSlots': {
+        slotId: true,
+      },
+      'readSlots': {
+        slotId: true,
+      },
     });
     await ref.child('liveTyping/$slotId').set('');
+    await ref.child('slots/$slotId/lastSeen').set(now);
+  }
+
+  @override
+  Future<void> acknowledgeMessages({
+    required String channelName,
+    required String slotId,
+    required List<String> messageIds,
+    bool markRead = true,
+  }) async {
+    if (messageIds.isEmpty) {
+      return;
+    }
+
+    final ref = _channelReference(channelName);
+    if (ref == null) {
+      return;
+    }
+
+    final updates = <String, Object>{};
+    for (final messageId in messageIds) {
+      updates['messages/$messageId/deliveredSlots/$slotId'] = true;
+      if (markRead) {
+        updates['messages/$messageId/readSlots/$slotId'] = true;
+      }
+    }
+    updates['slots/$slotId/lastSeen'] = DateTime.now().millisecondsSinceEpoch;
+
+    await ref.update(updates);
   }
 
   @override
