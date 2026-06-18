@@ -1,6 +1,6 @@
-# Live Chat App
+# Live App
 
-Flutter web tabanlı gerçek zamanlı sohbet uygulaması.
+Flutter web tabanlı gerçek zamanlı  uygulaması.
 
 ## Firebase Kurulumu
 

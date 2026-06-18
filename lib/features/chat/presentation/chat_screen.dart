@@ -21,7 +21,8 @@ class ChatScreen extends ConsumerStatefulWidget {
   ConsumerState<ChatScreen> createState() => _ChatScreenState();
 }
 
-class _ChatScreenState extends ConsumerState<ChatScreen> with WidgetsBindingObserver {
+class _ChatScreenState extends ConsumerState<ChatScreen>
+    with WidgetsBindingObserver {
   final _composerController = TextEditingController();
   final _peerTypingController = TextEditingController();
   final _scrollController = ScrollController();
@@ -39,7 +40,9 @@ class _ChatScreenState extends ConsumerState<ChatScreen> with WidgetsBindingObse
     WidgetsBinding.instance.addObserver(this);
     _scrollController.addListener(_handleScroll);
     _heartbeatTimer = Timer.periodic(const Duration(seconds: 30), (_) {
-      ref.read(chatServiceProvider).heartbeat(
+      ref
+          .read(chatServiceProvider)
+          .heartbeat(
             channelName: widget.session.channelName,
             slotId: widget.session.slotId,
           );
@@ -78,10 +81,9 @@ class _ChatScreenState extends ConsumerState<ChatScreen> with WidgetsBindingObse
     }
 
     _initialMessagesLoaded = true;
-    final messages = await ref.read(chatRepositoryProvider).fetchMessagesPage(
-          channelName: widget.session.channelName,
-          limit: 30,
-        );
+    final messages = await ref
+        .read(chatRepositoryProvider)
+        .fetchMessagesPage(channelName: widget.session.channelName, limit: 30);
     if (!mounted) {
       return;
     }
@@ -117,15 +119,19 @@ class _ChatScreenState extends ConsumerState<ChatScreen> with WidgetsBindingObse
     for (final message in incomingMessages) {
       final messageId = message.id;
       if (messageId != null && _messageIds.contains(messageId)) {
-        final existingIndex = _messageItems.indexWhere((item) => item.id == messageId);
+        final existingIndex = _messageItems.indexWhere(
+          (item) => item.id == messageId,
+        );
         if (existingIndex != -1) {
           final existingMessage = _messageItems[existingIndex];
           if (existingMessage.senderNick != message.senderNick ||
               existingMessage.senderSlotId != message.senderSlotId ||
               existingMessage.text != message.text ||
               existingMessage.timestamp != message.timestamp ||
-              existingMessage.deliveredSlots.toString() != message.deliveredSlots.toString() ||
-              existingMessage.readSlots.toString() != message.readSlots.toString()) {
+              existingMessage.deliveredSlots.toString() !=
+                  message.deliveredSlots.toString() ||
+              existingMessage.readSlots.toString() !=
+                  message.readSlots.toString()) {
             _messageItems[existingIndex] = message;
             changed = true;
           }
@@ -176,7 +182,9 @@ class _ChatScreenState extends ConsumerState<ChatScreen> with WidgetsBindingObse
     _loadingOlderMessages = true;
     setState(() {});
 
-    final olderMessages = await ref.read(chatRepositoryProvider).fetchMessagesPage(
+    final olderMessages = await ref
+        .read(chatRepositoryProvider)
+        .fetchMessagesPage(
           channelName: widget.session.channelName,
           endAtTimestamp: oldestTimestamp - 1,
           limit: 30,
@@ -198,7 +206,9 @@ class _ChatScreenState extends ConsumerState<ChatScreen> with WidgetsBindingObse
             _messageIds.add(messageId);
           }
         }
-        _oldestTimestamp = _messageItems.isEmpty ? null : _messageItems.first.timestamp;
+        _oldestTimestamp = _messageItems.isEmpty
+            ? null
+            : _messageItems.first.timestamp;
       }
       _loadingOlderMessages = false;
     });
@@ -294,8 +304,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> with WidgetsBindingObse
   }
 
   Future<void> _acknowledgeIncomingMessages(
-    List<MessageModel> messages,
-    {
+    List<MessageModel> messages, {
     required bool markRead,
   }) async {
     final idsToAck = <String>[];
@@ -319,7 +328,9 @@ class _ChatScreenState extends ConsumerState<ChatScreen> with WidgetsBindingObse
       return;
     }
 
-    await ref.read(chatServiceProvider).acknowledgeMessages(
+    await ref
+        .read(chatServiceProvider)
+        .acknowledgeMessages(
           channelName: widget.session.channelName,
           slotId: widget.session.slotId,
           messageIds: idsToAck,
@@ -350,11 +361,37 @@ class _ChatScreenState extends ConsumerState<ChatScreen> with WidgetsBindingObse
         slotId: otherSlotId,
       )),
     );
+    final ownCursorState = ref.watch(
+      chatCursorProvider((
+        channelName: widget.session.channelName,
+        slotId: widget.session.slotId,
+      )),
+    );
+    final otherCursorState = ref.watch(
+      chatCursorProvider((
+        channelName: widget.session.channelName,
+        slotId: otherSlotId,
+      )),
+    );
 
     final otherNick = channel?.slots[otherSlotId]?.nick ?? 'Karşı taraf';
     final ownNick = widget.session.nick;
     final isOtherOnline = otherOnlineState.value ?? false;
     final otherLastSeen = otherSlotState.value?.lastSeen;
+    final nowMillis = DateTime.now().millisecondsSinceEpoch;
+    final ownSlotCursor = ownCursorState.value;
+    final otherSlotCursor = otherCursorState.value;
+
+    final showRemoteCursorOnOwnSlot =
+        ownSlotCursor != null &&
+        ownSlotCursor.nick != ownNick &&
+        ownSlotCursor.offset >= 0 &&
+        nowMillis - ownSlotCursor.updatedAt <= 12000;
+    final showRemoteCursorOnOtherSlot =
+        otherSlotCursor != null &&
+        otherSlotCursor.nick != ownNick &&
+        otherSlotCursor.offset >= 0 &&
+        nowMillis - otherSlotCursor.updatedAt <= 12000;
 
     ref.listen<AsyncValue<List<MessageModel>>>(
       chatMessagesProvider(widget.session),
@@ -409,7 +446,9 @@ class _ChatScreenState extends ConsumerState<ChatScreen> with WidgetsBindingObse
           PopupMenuButton<String>(
             onSelected: (value) async {
               if (value == 'logout') {
-                await ref.read(chatServiceProvider).setOnline(
+                await ref
+                    .read(chatServiceProvider)
+                    .setOnline(
                       channelName: widget.session.channelName,
                       slotId: widget.session.slotId,
                       online: false,
@@ -417,13 +456,17 @@ class _ChatScreenState extends ConsumerState<ChatScreen> with WidgetsBindingObse
                 await SessionStorage.clearActiveSession();
                 if (context.mounted) {
                   Navigator.of(context).pushAndRemoveUntil(
-                    MaterialPageRoute<void>(builder: (_) => const LoginScreen()),
+                    MaterialPageRoute<void>(
+                      builder: (_) => const LoginScreen(),
+                    ),
                     (_) => false,
                   );
                 }
               } else if (value == 'emojis' && context.mounted) {
                 Navigator.of(context).push(
-                  MaterialPageRoute<void>(builder: (_) => const EmojiHelpScreen()),
+                  MaterialPageRoute<void>(
+                    builder: (_) => const EmojiHelpScreen(),
+                  ),
                 );
               }
             },
@@ -436,16 +479,19 @@ class _ChatScreenState extends ConsumerState<ChatScreen> with WidgetsBindingObse
       ),
       body: Column(
         children: [
-          if (_loadingOlderMessages) const LinearProgressIndicator(minHeight: 2),
+          if (_loadingOlderMessages)
+            const LinearProgressIndicator(minHeight: 2),
           LiveTypingBox(
             label: '',
             badgeLabel: otherNick,
-            badgeColor: widget.session.slotId == 'slot1' ? Colors.red : Colors.green,
+            badgeColor: const Color(0xFF4B6A88),
             controller: _peerTypingController,
             enabled: true,
             readOnly: false,
             onChanged: (value) {
-              ref.read(chatServiceProvider).updateTyping(
+              ref
+                  .read(chatServiceProvider)
+                  .updateTyping(
                     channelName: widget.session.channelName,
                     slotId: otherSlotId,
                     text: value,
@@ -455,7 +501,31 @@ class _ChatScreenState extends ConsumerState<ChatScreen> with WidgetsBindingObse
             onSend: null,
             sendEnabled: false,
             showSendButton: false,
-            showHeader: true,
+            showHeader: false,
+            showInlineBadge: true,
+            showCursorNick: true,
+            cursorNick: ownNick,
+            containerColor: const Color(0xFFE9EFF6),
+            inputFillColor: const Color(0xFFF6F9FC),
+            inputBorderColor: const Color(0xFFBCCBDB),
+            inputTextColor: const Color(0xFF3E5A77),
+            onCursorChanged: (offset) {
+              ref
+                  .read(chatServiceProvider)
+                  .updateCursor(
+                    channelName: widget.session.channelName,
+                    slotId: otherSlotId,
+                    nick: ownNick,
+                    offset: offset,
+                  );
+            },
+            remoteCursorNick: showRemoteCursorOnOtherSlot
+                ? otherSlotCursor.nick
+                : null,
+            remoteCursorOffset: showRemoteCursorOnOtherSlot
+                ? otherSlotCursor.offset
+                : null,
+            remoteCursorColor: const Color(0xFF0A4F96),
             helperText: 'Bu alanı sadece $otherNick gönderebilir',
             compact: true,
           ),
@@ -489,7 +559,8 @@ class _ChatScreenState extends ConsumerState<ChatScreen> with WidgetsBindingObse
                         previousMessage.timestamp,
                       );
                 final showDayHeader =
-                    previousDate == null || !_isSameDay(messageDate, previousDate);
+                    previousDate == null ||
+                    !_isSameDay(messageDate, previousDate);
                 final timeText = _formatTime24(messageDate);
 
                 return Column(
@@ -516,58 +587,102 @@ class _ChatScreenState extends ConsumerState<ChatScreen> with WidgetsBindingObse
                           ),
                         ),
                       ),
-                    Align(
-                      alignment:
-                          isMine ? Alignment.centerRight : Alignment.centerLeft,
-                      child: Container(
-                        margin: const EdgeInsets.only(bottom: 12),
-                        padding: const EdgeInsets.all(12),
-                        constraints: const BoxConstraints(maxWidth: 520),
-                        decoration: BoxDecoration(
-                          color:
-                              isMine ? const Color(0xFFD7F5E8) : Colors.white,
-                          borderRadius: BorderRadius.circular(16),
-                          border: Border.all(color: Colors.black12),
-                        ),
-                        child: Column(
-                          crossAxisAlignment: isMine
-                              ? CrossAxisAlignment.end
-                              : CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              message.senderNick,
-                              style: const TextStyle(
-                                fontWeight: FontWeight.w600,
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 12),
+                      child: Row(
+                        mainAxisAlignment: isMine
+                            ? MainAxisAlignment.end
+                            : MainAxisAlignment.start,
+                        crossAxisAlignment: CrossAxisAlignment.center,
+                        children: [
+                          Flexible(
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 14,
+                                vertical: 10,
                               ),
-                            ),
-                            const SizedBox(height: 4),
-                            Text(EmojiShortcodes.emojify(message.text)),
-                            const SizedBox(height: 6),
-                            Row(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                Text(
-                                  timeText,
-                                  style: Theme.of(context).textTheme.bodySmall,
+                              constraints: const BoxConstraints(maxWidth: 520),
+                              decoration: BoxDecoration(
+                                color: isMine
+                                    ? const Color(0xFFDDF7EA)
+                                    : const Color(0xFFF1F4F8),
+                                borderRadius: BorderRadius.only(
+                                  topLeft: const Radius.circular(18),
+                                  topRight: const Radius.circular(18),
+                                  bottomLeft: Radius.circular(isMine ? 18 : 6),
+                                  bottomRight: Radius.circular(isMine ? 6 : 18),
                                 ),
-                                if (isMine) ...[
-                                  const SizedBox(width: 6),
-                                  Icon(
-                                    _statusIconForMessage(
-                                      message: message,
-                                      otherSlotId: otherSlotId,
-                                    ),
-                                    size: 16,
-                                    color: _statusColorForMessage(
-                                      message: message,
-                                      otherSlotId: otherSlotId,
-                                    ),
+                                border: Border.all(
+                                  color: isMine
+                                      ? const Color(0xFFC5E8D7)
+                                      : const Color(0xFFD9E0E8),
+                                ),
+                                boxShadow: [
+                                  BoxShadow(
+                                    color: Colors.black.withValues(alpha: 0.05),
+                                    blurRadius: 8,
+                                    offset: const Offset(0, 2),
                                   ),
                                 ],
-                              ],
+                              ),
+                              child: Column(
+                                crossAxisAlignment: isMine
+                                    ? CrossAxisAlignment.end
+                                    : CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    EmojiShortcodes.emojify(message.text),
+                                    style: TextStyle(
+                                      color: isMine
+                                          ? Colors.black87
+                                          : const Color(0xFF324D67),
+                                    ),
+                                  ),
+                                  const SizedBox(height: 6),
+                                  Row(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      Text(
+                                        timeText,
+                                        style: Theme.of(context)
+                                            .textTheme
+                                            .bodySmall
+                                            ?.copyWith(color: Colors.black54),
+                                      ),
+                                      if (isMine) ...[
+                                        const SizedBox(width: 6),
+                                        Icon(
+                                          _statusIconForMessage(
+                                            message: message,
+                                            otherSlotId: otherSlotId,
+                                          ),
+                                          size: 16,
+                                          color: _statusColorForMessage(
+                                            message: message,
+                                            otherSlotId: otherSlotId,
+                                          ),
+                                        ),
+                                      ],
+                                    ],
+                                  ),
+                                ],
+                              ),
                             ),
-                          ],
-                        ),
+                          ),
+                          const SizedBox(width: 8),
+                          ConstrainedBox(
+                            constraints: const BoxConstraints(maxWidth: 90),
+                            child: Text(
+                              message.senderNick,
+                              overflow: TextOverflow.ellipsis,
+                              style: Theme.of(context).textTheme.bodySmall
+                                  ?.copyWith(
+                                    fontWeight: FontWeight.w700,
+                                    color: Colors.black54,
+                                  ),
+                            ),
+                          ),
+                        ],
                       ),
                     ),
                   ],
@@ -578,12 +693,16 @@ class _ChatScreenState extends ConsumerState<ChatScreen> with WidgetsBindingObse
           LiveTypingBox(
             label: '',
             badgeLabel: ownNick,
-            badgeColor: widget.session.slotId == 'slot1' ? Colors.green : Colors.red,
+            badgeColor: widget.session.slotId == 'slot1'
+                ? Colors.green
+                : Colors.red,
             controller: _composerController,
             enabled: true,
             readOnly: false,
             onChanged: (value) {
-              ref.read(chatServiceProvider).updateTyping(
+              ref
+                  .read(chatServiceProvider)
+                  .updateTyping(
                     channelName: widget.session.channelName,
                     slotId: widget.session.slotId,
                     text: value,
@@ -595,7 +714,9 @@ class _ChatScreenState extends ConsumerState<ChatScreen> with WidgetsBindingObse
               if (text.isEmpty) {
                 return;
               }
-              await ref.read(chatServiceProvider).sendMessage(
+              await ref
+                  .read(chatServiceProvider)
+                  .sendMessage(
                     channelName: widget.session.channelName,
                     slotId: widget.session.slotId,
                     nick: widget.session.nick,
@@ -604,7 +725,31 @@ class _ChatScreenState extends ConsumerState<ChatScreen> with WidgetsBindingObse
               _composerController.clear();
             },
             sendEnabled: true,
-            showHeader: true,
+            showHeader: false,
+            sendInline: true,
+            showCursorNick: true,
+            cursorNick: ownNick,
+            containerColor: const Color(0xFFEAF8EF),
+            inputFillColor: const Color(0xFFF8FCF9),
+            inputBorderColor: const Color(0xFFBFDCCB),
+            inputTextColor: Colors.black87,
+            onCursorChanged: (offset) {
+              ref
+                  .read(chatServiceProvider)
+                  .updateCursor(
+                    channelName: widget.session.channelName,
+                    slotId: widget.session.slotId,
+                    nick: ownNick,
+                    offset: offset,
+                  );
+            },
+            remoteCursorNick: showRemoteCursorOnOwnSlot
+                ? ownSlotCursor.nick
+                : null,
+            remoteCursorOffset: showRemoteCursorOnOwnSlot
+                ? ownSlotCursor.offset
+                : null,
+            remoteCursorColor: const Color(0xFF0A4F96),
             helperText: 'Mesajı yalnızca kendi alanından gönderebilirsin',
             compact: true,
           ),

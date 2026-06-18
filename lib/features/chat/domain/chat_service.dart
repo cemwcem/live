@@ -1,4 +1,5 @@
 import '../../../core/models/channel_model.dart';
+import '../../../core/models/cursor_presence_model.dart';
 import '../../../core/models/message_model.dart';
 import '../../../core/models/slot_model.dart';
 import '../data/chat_repository.dart';
@@ -56,6 +57,20 @@ class ChatService {
     );
   }
 
+  Future<void> updateCursor({
+    required String channelName,
+    required String slotId,
+    required String nick,
+    required int offset,
+  }) {
+    return _repository.updateCursor(
+      channelName: channelName,
+      slotId: slotId,
+      nick: nick,
+      offset: offset,
+    );
+  }
+
   Future<void> setOnline({
     required String channelName,
     required String slotId,
@@ -82,6 +97,13 @@ class ChatService {
     return _repository.watchTyping(channelName: channelName, slotId: slotId);
   }
 
+  Stream<CursorPresenceModel?> watchCursor({
+    required String channelName,
+    required String slotId,
+  }) {
+    return _repository.watchCursor(channelName: channelName, slotId: slotId);
+  }
+
   Stream<SlotModel?> watchSlot({
     required String channelName,
     required String slotId,
@@ -93,6 +115,9 @@ class ChatService {
     required String channelName,
     required String slotId,
   }) {
-    return _repository.watchSlotOnline(channelName: channelName, slotId: slotId);
+    return _repository.watchSlotOnline(
+      channelName: channelName,
+      slotId: slotId,
+    );
   }
 }
