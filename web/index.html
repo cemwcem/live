@@ -41,29 +41,193 @@
     For more details:
     * https://docs.flutter.dev/platform-integration/web/initialization
   -->
-  <script src="flutter_bootstrap.js" async></script>
-
   <script>
-    // Yeni sürüm kontrolü: version.json'ı periyodik olarak kontrol et.
-    // Deploy sonrasında kullanıcı sayfayı manuel yenilemek zorunda kalmaz.
+    // Sürüm kapısı: önce version.json kontrol edilir.
+    // Sürüm değişmediyse cache korunur ve app normal açılır.
+    // Sürüm değiştiyse SW/cache temizlenip tek seferlik cache-bust reload yapılır.
     (function () {
-      var currentVersion = null;
+      var STORAGE_KEY = 'live_app_last_seen_version';
+      var BOOTSTRAP_LOADED_KEY = 'live_bootstrap_loaded';
       var CHECK_INTERVAL_MS = 60000; // Her 60 saniyede bir kontrol.
+      var bootstrapLoaded = false;
 
-      function fetchVersion() {
-        fetch('/version.json?_=' + Date.now(), { cache: 'no-store' })
-          .then(function (r) { return r.json(); })
-          .then(function (data) {
-            var v = data && (data.appVersion || data.version || JSON.stringify(data));
-            if (currentVersion === null) {
-              currentVersion = v;
-            } else if (v && v !== currentVersion) {
-              window.location.reload();
-            }
-          })
-          .catch(function () {});
+      function currentUrl() {
+        return new URL(window.location.href);
       }
 
+      function hasLegacySwControl() {
+        return !!(navigator.serviceWorker && navigator.serviceWorker.controller);
+      }
+
+      function injectBootstrapScript(cacheBust) {
+        if (bootstrapLoaded) {
+          return;
+        }
+        bootstrapLoaded = true;
+        try {
+          sessionStorage.setItem(BOOTSTRAP_LOADED_KEY, '1');
+        } catch (e) {}
+
+        var s = document.createElement('script');
+        s.src = cacheBust
+          ? ('flutter_bootstrap.js?_=' + Date.now())
+          : 'flutter_bootstrap.js';
+        s.async = true;
+        document.body.appendChild(s);
+      }
+
+      function clearOldCaches() {
+        if (!('caches' in window)) {
+          return Promise.resolve();
+        }
+        return caches.keys().then(function (keys) {
+          return Promise.all(keys.map(function (key) {
+            return caches.delete(key);
+          }));
+        });
+      }
+
+      function clearOldServiceWorkers() {
+        if (!('serviceWorker' in navigator)) {
+          return Promise.resolve();
+        }
+        return navigator.serviceWorker.getRegistrations().then(function (regs) {
+          return Promise.all(regs.map(function (reg) {
+            return reg.unregister();
+          }));
+        });
+      }
+
+      function clearRuntimeCaches() {
+        return Promise.resolve()
+          .then(clearOldServiceWorkers)
+          .then(clearOldCaches)
+          .catch(function () {
+            // Temizleme hatasi app boot'u bloklamamali.
+          });
+      }
+
+      // Eski SW'nin version.json isteklerini yakalamasini engellemek icin
+      // ilk adimda tek seferlik bir SW-reset yonlendirmesi yap.
+      function ensureNotControlledByLegacySw() {
+        var url = currentUrl();
+        if (!hasLegacySwControl() || url.searchParams.get('_swreset') === '1') {
+          return Promise.resolve(false);
+        }
+
+        return clearRuntimeCaches().then(function () {
+          var reloadUrl = currentUrl();
+          reloadUrl.searchParams.set('_swreset', '1');
+          reloadUrl.searchParams.set('_v', Date.now().toString());
+          window.location.replace(reloadUrl.toString());
+          return true;
+        });
+      }
+
+      function forceReloadWithBypass(version) {
+        try {
+          if (version) {
+            localStorage.setItem(STORAGE_KEY, version);
+          }
+        } catch (e) {}
+
+        var url = currentUrl();
+        url.searchParams.set('_v', Date.now().toString());
+        // replace() yeni URL ile cache-bust ederek geri tuşu döngüsünü azaltır.
+        window.location.replace(url.toString());
+      }
+
+      function resolveVersionValue(data) {
+        return data && (data.appVersion || data.version || JSON.stringify(data));
+      }
+
+      function fetchVersionJson() {
+        return fetch('/version.json?_=' + Date.now(), { cache: 'no-store' })
+          .then(function (r) { return r.json(); })
+          .then(function (data) {
+            return resolveVersionValue(data);
+          });
+      }
+
+      function fetchVersion() {
+        fetchVersionJson()
+          .then(function (v) {
+            if (!v) {
+              return;
+            }
+
+            var previous = null;
+            try {
+              previous = localStorage.getItem(STORAGE_KEY);
+            } catch (e) {}
+
+            if (previous === null) {
+              try {
+                localStorage.setItem(STORAGE_KEY, v);
+              } catch (e) {}
+              return;
+            }
+
+            if (v !== previous) {
+              clearRuntimeCaches().then(function () {
+                forceReloadWithBypass(v);
+              });
+              return;
+            }
+
+            try {
+              localStorage.setItem(STORAGE_KEY, v);
+            } catch (e) {}
+          })
+          .catch(function () {
+            // version check failure should not break app boot.
+          });
+      }
+
+      // İlk yükleme kapısı: sürüm kontrolünden sonra bootstrap enjekte edilir.
+      function bootstrapVersionGuard() {
+        ensureNotControlledByLegacySw()
+          .then(function (isRedirecting) {
+            if (isRedirecting) {
+              return null;
+            }
+            return fetchVersionJson();
+          })
+          .then(function (v) {
+            if (v === null) {
+              return;
+            }
+            if (!v) {
+              injectBootstrapScript(false);
+              return;
+            }
+
+            var previous = null;
+            try {
+              previous = localStorage.getItem(STORAGE_KEY);
+            } catch (e) {}
+
+            if (previous !== null && previous !== v) {
+              clearRuntimeCaches().then(function () {
+                forceReloadWithBypass(v);
+              });
+              return;
+            }
+
+            try {
+              localStorage.setItem(STORAGE_KEY, v);
+            } catch (e) {}
+
+            // Sürüm aynıysa cache'i koruyarak normal bootstrap.
+            injectBootstrapScript(false);
+          })
+          .catch(function () {
+            // Kontrol hatasında app'i yine de aç.
+            injectBootstrapScript(false);
+          });
+      }
+
+      bootstrapVersionGuard();
       fetchVersion();
       setInterval(fetchVersion, CHECK_INTERVAL_MS);
     })();

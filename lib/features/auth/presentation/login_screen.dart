@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../core/app_release.dart';
 import '../../chat/presentation/chat_screen.dart';
 import 'login_provider.dart';
 
@@ -123,6 +124,15 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                               child: CircularProgressIndicator(strokeWidth: 2),
                             )
                           : const Text('Giriş Yap'),
+                    ),
+                    const SizedBox(height: 12),
+                    Text(
+                      'Release : ${AppRelease.name} (${AppRelease.version})',
+                      textAlign: TextAlign.center,
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: Colors.black45,
+                        letterSpacing: 0.2,
+                      ),
                     ),
                   ],
                 ),
