@@ -34,6 +34,9 @@ class LiveTypingBox extends StatelessWidget {
     this.remoteCursorColor,
     this.maxLength,
     this.onMaxLengthReached,
+    this.replyPreviewNick,
+    this.replyPreviewText,
+    this.onClearReply,
   });
 
   final String label;
@@ -64,6 +67,9 @@ class LiveTypingBox extends StatelessWidget {
   final Color? remoteCursorColor;
   final int? maxLength;
   final VoidCallback? onMaxLengthReached;
+  final String? replyPreviewNick;
+  final String? replyPreviewText;
+  final VoidCallback? onClearReply;
 
   @override
   Widget build(BuildContext context) {
@@ -135,6 +141,9 @@ class LiveTypingBox extends StatelessWidget {
         ),
       ),
     );
+    final hasReplyPreview =
+        (replyPreviewNick?.isNotEmpty ?? false) &&
+        (replyPreviewText?.isNotEmpty ?? false);
 
     return Container(
       width: double.infinity,
@@ -149,6 +158,62 @@ class LiveTypingBox extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          if (hasReplyPreview) ...[
+            Container(
+              width: double.infinity,
+              margin: const EdgeInsets.only(bottom: 8),
+              padding: const EdgeInsets.fromLTRB(10, 8, 6, 8),
+              decoration: BoxDecoration(
+                color: badgeColor.withValues(alpha: 0.09),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: badgeColor.withValues(alpha: 0.35)),
+              ),
+              child: Row(
+                children: [
+                  Container(
+                    width: 4,
+                    height: 36,
+                    decoration: BoxDecoration(
+                      color: badgeColor,
+                      borderRadius: BorderRadius.circular(999),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          'Yanıt: ${replyPreviewNick!}',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            color: badgeColor,
+                            fontWeight: FontWeight.w700,
+                            fontSize: 12,
+                          ),
+                        ),
+                        const SizedBox(height: 2),
+                        Text(
+                          replyPreviewText!,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(fontSize: 12),
+                        ),
+                      ],
+                    ),
+                  ),
+                  IconButton(
+                    onPressed: onClearReply,
+                    tooltip: 'Yanıtı iptal et',
+                    splashRadius: 16,
+                    icon: const Icon(Icons.close_rounded, size: 18),
+                  ),
+                ],
+              ),
+            ),
+          ],
           if (showHeader) ...[
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,

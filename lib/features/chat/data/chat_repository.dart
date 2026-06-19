@@ -71,6 +71,9 @@ abstract class ChatRepository {
     required String slotId,
     required String nick,
     required String text,
+    String? replyToMessageId,
+    String? replyToSenderNick,
+    String? replyToText,
   });
   Future<void> acknowledgeMessages({
     required String channelName,
@@ -523,6 +526,9 @@ class FirebaseChatRepository implements ChatRepository {
     required String slotId,
     required String nick,
     required String text,
+    String? replyToMessageId,
+    String? replyToSenderNick,
+    String? replyToText,
   }) async {
     final ref = _channelReference(channelName);
     if (ref == null) {
@@ -538,6 +544,13 @@ class FirebaseChatRepository implements ChatRepository {
       'timestamp': now,
       'deliveredSlots': {slotId: true},
       'readSlots': {slotId: true},
+      ...?replyToMessageId == null
+          ? null
+          : {'replyToMessageId': replyToMessageId},
+      ...?replyToSenderNick == null
+          ? null
+          : {'replyToSenderNick': replyToSenderNick},
+      ...?replyToText == null ? null : {'replyToText': replyToText},
     });
     await ref.child('liveTyping/$slotId').set('');
     await _touchPresence(ref: ref, slotId: slotId);

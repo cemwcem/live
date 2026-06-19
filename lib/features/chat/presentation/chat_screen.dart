@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/app_release.dart';
@@ -33,6 +34,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
   final _scrollController = ScrollController();
   final List<MessageModel> _messageItems = [];
   final Set<String> _messageIds = {};
+  final Map<String, GlobalKey> _messageBubbleKeys = {};
   Timer? _heartbeatTimer;
   Timer? _typingOwnDebounce;
   Timer? _typingPeerDebounce;
@@ -47,6 +49,10 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
   bool _charLimitWarningVisible = false;
   int? _remoteOwnTypingLastActiveMs;
   int? _remoteOtherTypingLastActiveMs;
+  MessageModel? _replyTarget;
+  String? _hoveredMessageId;
+  String? _menuOpenMessageId;
+  bool _jumpToReplyInProgress = false;
 
   @override
   void initState() {
@@ -102,7 +108,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     final messages = await ref
         .read(chatRepositoryProvider)
         .fetchMessagesPage(channelName: widget.session.channelName, limit: 30);
-    if (!mounted) {
+    if (!context.mounted) {
       return;
     }
 
@@ -123,10 +129,12 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
   void _replaceMessages(List<MessageModel> messages) {
     _messageItems.clear();
     _messageIds.clear();
+    _messageBubbleKeys.clear();
     for (final message in messages) {
       _messageItems.add(message);
       if (message.id != null) {
         _messageIds.add(message.id!);
+        _messageBubbleKeys.putIfAbsent(message.id!, GlobalKey.new);
       }
     }
     _oldestTimestamp = messages.isEmpty ? null : messages.first.timestamp;
@@ -146,6 +154,9 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
               existingMessage.senderSlotId != message.senderSlotId ||
               existingMessage.text != message.text ||
               existingMessage.timestamp != message.timestamp ||
+              existingMessage.replyToMessageId != message.replyToMessageId ||
+              existingMessage.replyToSenderNick != message.replyToSenderNick ||
+              existingMessage.replyToText != message.replyToText ||
               existingMessage.deliveredSlots.toString() !=
                   message.deliveredSlots.toString() ||
               existingMessage.readSlots.toString() !=
@@ -159,6 +170,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
       _messageItems.add(message);
       if (messageId != null) {
         _messageIds.add(messageId);
+        _messageBubbleKeys.putIfAbsent(messageId, GlobalKey.new);
       }
       changed = true;
     }
@@ -170,6 +182,9 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     if (changed) {
       setState(() {});
       WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (_jumpToReplyInProgress) {
+          return;
+        }
         if (_scrollController.hasClients) {
           final position = _scrollController.position;
           if (position.pixels > 120) {
@@ -222,6 +237,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
           _messageItems.insert(0, message);
           if (messageId != null) {
             _messageIds.add(messageId);
+            _messageBubbleKeys.putIfAbsent(messageId, GlobalKey.new);
           }
         }
         _oldestTimestamp = _messageItems.isEmpty
@@ -305,6 +321,307 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     _charLimitWarningVisible = true;
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(content: Text('Karakter sınırına ulaşıldı.')),
+    );
+  }
+
+  String _replyPreviewText(String text) {
+    final normalized = text.trim().replaceAll(RegExp(r'\s+'), ' ');
+    if (normalized.length <= 80) {
+      return normalized;
+    }
+    return '${normalized.substring(0, 80)}...';
+  }
+
+  void _setReplyTarget(MessageModel message) {
+    setState(() {
+      _replyTarget = message;
+    });
+  }
+
+  void _clearReplyTarget() {
+    if (_replyTarget == null) {
+      return;
+    }
+    setState(() {
+      _replyTarget = null;
+    });
+  }
+
+  Future<void> _openMessageActions(MessageModel message) async {
+    if (!mounted) {
+      return;
+    }
+    final messenger = ScaffoldMessenger.maybeOf(context);
+    final selected = await showModalBottomSheet<String>(
+      context: context,
+      showDragHandle: true,
+      builder: (context) {
+        return SafeArea(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              ListTile(
+                leading: const Icon(Icons.reply_rounded),
+                title: const Text('Mesaja yanıt ver'),
+                subtitle: Text(
+                  _replyPreviewText(EmojiShortcodes.emojify(message.text)),
+                ),
+                onTap: () => Navigator.of(context).pop('reply'),
+              ),
+              ListTile(
+                leading: const Icon(Icons.copy_rounded),
+                title: const Text('Kopyala'),
+                onTap: () => Navigator.of(context).pop('copy'),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+
+    if (!mounted) {
+      return;
+    }
+    if (selected == 'reply') {
+      _setReplyTarget(message);
+    } else if (selected == 'copy') {
+      await Clipboard.setData(ClipboardData(text: message.text));
+      if (!mounted) {
+        return;
+      }
+      messenger?.showSnackBar(const SnackBar(content: Text('Mesaj kopyalandı.')));
+    }
+  }
+
+  Future<void> _handleMessageMenuAction({
+    required String action,
+    required MessageModel message,
+  }) async {
+    final messenger = ScaffoldMessenger.maybeOf(context);
+    if (action == 'reply') {
+      _setReplyTarget(message);
+      return;
+    }
+    if (action == 'copy') {
+      await Clipboard.setData(ClipboardData(text: message.text));
+      if (!mounted) {
+        return;
+      }
+      messenger?.showSnackBar(const SnackBar(content: Text('Mesaj kopyalandı.')));
+    }
+  }
+
+  Future<bool> _ensureMessageLoaded(String messageId) async {
+    if (_messageIds.contains(messageId)) {
+      return true;
+    }
+
+    var oldestTimestamp = _oldestTimestamp;
+    while (oldestTimestamp != null) {
+      final olderMessages = await ref
+          .read(chatRepositoryProvider)
+          .fetchMessagesPage(
+            channelName: widget.session.channelName,
+            endAtTimestamp: oldestTimestamp - 1,
+            limit: 80,
+          );
+      if (olderMessages.isEmpty) {
+        return false;
+      }
+
+      if (!mounted) {
+        return false;
+      }
+
+      setState(() {
+        for (final message in olderMessages.reversed) {
+          final id = message.id;
+          if (id != null && _messageIds.contains(id)) {
+            continue;
+          }
+          _messageItems.insert(0, message);
+          if (id != null) {
+            _messageIds.add(id);
+            _messageBubbleKeys.putIfAbsent(id, GlobalKey.new);
+          }
+        }
+        _oldestTimestamp =
+            _messageItems.isEmpty ? null : _messageItems.first.timestamp;
+      });
+
+      if (_messageIds.contains(messageId)) {
+        return true;
+      }
+
+      final nextOldestTimestamp = _oldestTimestamp;
+      if (nextOldestTimestamp == oldestTimestamp) {
+        break;
+      }
+      oldestTimestamp = nextOldestTimestamp;
+    }
+
+    return _messageIds.contains(messageId);
+  }
+
+  Future<bool> _bringMessageIntoViewport(String messageId) async {
+    for (var attempt = 0; attempt < 10; attempt++) {
+      if (_messageBubbleKeys[messageId]?.currentContext != null) {
+        return true;
+      }
+      if (!_scrollController.hasClients) {
+        await Future<void>.delayed(const Duration(milliseconds: 16));
+        continue;
+      }
+
+      final index = _messageItems.indexWhere((item) => item.id == messageId);
+      if (index == -1) {
+        return false;
+      }
+      final maxScroll = _scrollController.position.maxScrollExtent;
+      if (maxScroll <= 0) {
+        await Future<void>.delayed(const Duration(milliseconds: 16));
+        continue;
+      }
+
+      final ratio = _messageItems.length <= 1
+          ? 0.0
+          : 1 - (index / (_messageItems.length - 1));
+      final viewport = _scrollController.position.viewportDimension;
+      final jitter = attempt.isEven ? 0.0 : viewport * 0.18;
+      final estimatedOffset =
+          (maxScroll * ratio + jitter).clamp(0.0, maxScroll).toDouble();
+      _scrollController.jumpTo(estimatedOffset);
+      await Future<void>.delayed(const Duration(milliseconds: 24));
+    }
+
+    return _messageBubbleKeys[messageId]?.currentContext != null;
+  }
+
+  Future<void> _jumpToMessageById(String? messageId) async {
+    if (messageId == null || messageId.isEmpty || _jumpToReplyInProgress) {
+      return;
+    }
+
+    _jumpToReplyInProgress = true;
+    try {
+      final loaded = await _ensureMessageLoaded(messageId);
+      if (!mounted || !loaded) {
+        return;
+      }
+
+      await Future<void>.delayed(const Duration(milliseconds: 16));
+      if (!mounted) {
+        return;
+      }
+
+      final hasTargetInViewport = await _bringMessageIntoViewport(messageId);
+      if (!mounted || !hasTargetInViewport) {
+        return;
+      }
+
+      final targetContext = _messageBubbleKeys[messageId]?.currentContext;
+      if (targetContext == null || !targetContext.mounted) {
+        return;
+      }
+
+      await Scrollable.ensureVisible(
+        targetContext,
+        duration: const Duration(milliseconds: 320),
+        curve: Curves.easeOut,
+        alignment: 0.5,
+      );
+    } finally {
+      _jumpToReplyInProgress = false;
+    }
+  }
+
+  bool _canPlaceMetaInline({
+    required String text,
+    required TextStyle textStyle,
+    required double maxWidth,
+    required double trailingMetaWidth,
+  }) {
+    final painter = TextPainter(
+      text: TextSpan(text: text, style: textStyle),
+      textDirection: TextDirection.ltr,
+      maxLines: null,
+    )..layout(maxWidth: maxWidth);
+
+    final lines = painter.computeLineMetrics();
+    if (lines.isEmpty) {
+      return true;
+    }
+
+    final lastLineWidth = lines.last.width;
+    return maxWidth - lastLineWidth >= trailingMetaWidth;
+  }
+
+  Widget _buildMessageMetaSlot({
+    required bool isMine,
+    required bool showHoverMenuButton,
+    required String otherSlotId,
+    required MessageModel message,
+  }) {
+    return SizedBox(
+      width: 20,
+      height: 20,
+      child: Stack(
+        alignment: Alignment.center,
+        children: [
+          if (isMine)
+            Opacity(
+              opacity: showHoverMenuButton ? 0 : 1,
+              child: Icon(
+                _statusIconForMessage(message: message, otherSlotId: otherSlotId),
+                size: 16,
+                color: _statusColorForMessage(
+                  message: message,
+                  otherSlotId: otherSlotId,
+                ),
+              ),
+            ),
+          Opacity(
+            opacity: showHoverMenuButton ? 1 : 0,
+            child: IgnorePointer(
+              ignoring: !showHoverMenuButton,
+              child: PopupMenuButton<String>(
+                tooltip: 'Mesaj menüsü',
+                padding: EdgeInsets.zero,
+                splashRadius: 14,
+                constraints: const BoxConstraints(minWidth: 130),
+                onOpened: () {
+                  setState(() {
+                    _menuOpenMessageId = message.id;
+                  });
+                },
+                onCanceled: () {
+                  if (!mounted) {
+                    return;
+                  }
+                  setState(() {
+                    if (_menuOpenMessageId == message.id) {
+                      _menuOpenMessageId = null;
+                    }
+                  });
+                },
+                onSelected: (value) {
+                  setState(() {
+                    if (_menuOpenMessageId == message.id) {
+                      _menuOpenMessageId = null;
+                    }
+                  });
+                  _handleMessageMenuAction(action: value, message: message);
+                },
+                itemBuilder: (context) => const [
+                  PopupMenuItem(value: 'reply', child: Text('Yanıtla')),
+                  PopupMenuItem(value: 'copy', child: Text('Kopyala')),
+                ],
+                child: const Icon(Icons.keyboard_arrow_down_rounded, size: 18),
+              ),
+            ),
+          ),
+        ],
+      ),
     );
   }
 
@@ -830,7 +1147,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
                   ),
                 );
 
-                if (!mounted || cleanupResult == null) {
+                if (!context.mounted || cleanupResult == null) {
                   return;
                 }
 
@@ -944,6 +1261,17 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
                     previousDate == null ||
                     !_isSameDay(messageDate, previousDate);
                 final timeText = _formatTime24(messageDate);
+                final replyTextRaw = message.replyToText;
+                final replyNickRaw = message.replyToSenderNick;
+                final hasReply =
+                  (replyTextRaw?.isNotEmpty ?? false) &&
+                  (replyNickRaw?.isNotEmpty ?? false);
+                final replyText = hasReply
+                  ? _replyPreviewText(EmojiShortcodes.emojify(replyTextRaw!))
+                  : null;
+                final showHoverMenuButton = message.id != null &&
+                    (_hoveredMessageId == message.id ||
+                        _menuOpenMessageId == message.id);
 
                 return Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -978,80 +1306,195 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
                         crossAxisAlignment: CrossAxisAlignment.center,
                         children: [
                           Flexible(
-                            child: Container(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 14,
-                                vertical: 10,
-                              ),
-                              constraints: const BoxConstraints(maxWidth: 520),
-                              decoration: BoxDecoration(
-                                color: isMine
-                                    ? const Color(0xFFDDF7EA)
-                                    : const Color(0xFFF1F4F8),
-                                borderRadius: BorderRadius.only(
-                                  topLeft: const Radius.circular(18),
-                                  topRight: const Radius.circular(18),
-                                  bottomLeft: Radius.circular(isMine ? 18 : 6),
-                                  bottomRight: Radius.circular(isMine ? 6 : 18),
-                                ),
-                                border: Border.all(
-                                  color: isMine
-                                      ? const Color(0xFFC5E8D7)
-                                      : const Color(0xFFD9E0E8),
-                                ),
-                                boxShadow: [
-                                  BoxShadow(
-                                    color: Colors.black.withValues(alpha: 0.05),
-                                    blurRadius: 8,
-                                    offset: const Offset(0, 2),
+                            child: MouseRegion(
+                              onEnter: (_) {
+                                if (message.id == null) {
+                                  return;
+                                }
+                                setState(() {
+                                  _hoveredMessageId = message.id;
+                                });
+                              },
+                              onExit: (_) {
+                                if (_hoveredMessageId != message.id ||
+                                    _menuOpenMessageId == message.id) {
+                                  return;
+                                }
+                                setState(() {
+                                  _hoveredMessageId = null;
+                                });
+                              },
+                              child: GestureDetector(
+                                onLongPress: () => _openMessageActions(message),
+                                child: Container(
+                                  key: message.id != null
+                                      ? _messageBubbleKeys.putIfAbsent(
+                                          message.id!,
+                                          GlobalKey.new,
+                                        )
+                                      : null,
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 14,
+                                    vertical: 10,
                                   ),
-                                ],
-                              ),
-                              child: Column(
-                                crossAxisAlignment: isMine
-                                    ? CrossAxisAlignment.end
-                                    : CrossAxisAlignment.start,
-                                children: [
-                                  Text(
-                                    EmojiShortcodes.emojify(message.text),
-                                    style: TextStyle(
-                                      color: isMine
-                                          ? Colors.black87
-                                          : const Color(0xFF324D67),
-                                    ),
-                                  ),
-                                  const SizedBox(height: 6),
-                                  Row(
-                                    mainAxisSize: MainAxisSize.min,
-                                    children: [
-                                      Text(
-                                        timeText,
-                                        style: Theme.of(context)
-                                            .textTheme
-                                            .bodySmall
-                                            ?.copyWith(color: Colors.black54),
+                                  constraints: const BoxConstraints(maxWidth: 520),
+                                  decoration: BoxDecoration(
+                                    color: isMine
+                                        ? const Color(0xFFDDF7EA)
+                                        : const Color(0xFFF1F4F8),
+                                    borderRadius: BorderRadius.only(
+                                      topLeft: const Radius.circular(18),
+                                      topRight: const Radius.circular(18),
+                                      bottomLeft: Radius.circular(
+                                        isMine ? 18 : 6,
                                       ),
-                                      if (isMine) ...[
-                                        const SizedBox(width: 6),
-                                        Icon(
-                                          _statusIconForMessage(
-                                            message: message,
-                                            otherSlotId: otherSlotId,
-                                          ),
-                                          size: 16,
-                                          color: _statusColorForMessage(
-                                            message: message,
-                                            otherSlotId: otherSlotId,
-                                          ),
-                                        ),
-                                      ],
+                                      bottomRight: Radius.circular(
+                                        isMine ? 6 : 18,
+                                      ),
+                                    ),
+                                    border: Border.all(
+                                      color: isMine
+                                          ? const Color(0xFFC5E8D7)
+                                          : const Color(0xFFD9E0E8),
+                                    ),
+                                    boxShadow: [
+                                      BoxShadow(
+                                        color: Colors.black.withValues(alpha: 0.05),
+                                        blurRadius: 8,
+                                        offset: const Offset(0, 2),
+                                      ),
                                     ],
                                   ),
-                                ],
+                                  child: Column(
+                                    crossAxisAlignment: isMine
+                                        ? CrossAxisAlignment.end
+                                        : CrossAxisAlignment.start,
+                                    children: [
+                                      if (hasReply)
+                                        GestureDetector(
+                                          behavior: HitTestBehavior.opaque,
+                                          onTap: () => _jumpToMessageById(
+                                            message.replyToMessageId,
+                                          ),
+                                          child: Container(
+                                            width: double.infinity,
+                                            margin: const EdgeInsets.only(
+                                              bottom: 6,
+                                            ),
+                                            padding: const EdgeInsets.symmetric(
+                                              horizontal: 10,
+                                              vertical: 7,
+                                            ),
+                                            decoration: BoxDecoration(
+                                              color: isMine
+                                                  ? const Color(0xFFCBEEDC)
+                                                  : const Color(0xFFE6ECF2),
+                                              borderRadius: BorderRadius.circular(
+                                                10,
+                                              ),
+                                              border: Border.all(
+                                                color: isMine
+                                                    ? const Color(0xFFB4DCC8)
+                                                    : const Color(0xFFD3DBE3),
+                                              ),
+                                            ),
+                                            child: Column(
+                                              crossAxisAlignment:
+                                                  CrossAxisAlignment.start,
+                                              children: [
+                                                Text(
+                                                  replyNickRaw!,
+                                                  maxLines: 1,
+                                                  overflow: TextOverflow.ellipsis,
+                                                  style: const TextStyle(
+                                                    fontSize: 12,
+                                                    fontWeight: FontWeight.w700,
+                                                  ),
+                                                ),
+                                                const SizedBox(height: 2),
+                                                Text(
+                                                  replyText!,
+                                                  maxLines: 1,
+                                                  overflow: TextOverflow.ellipsis,
+                                                  style: const TextStyle(
+                                                    fontSize: 12,
+                                                  ),
+                                                ),
+                                              ],
+                                            ),
+                                          ),
+                                        ),
+                                      Builder(
+                                        builder: (context) {
+                                          final messageText = EmojiShortcodes.emojify(
+                                            message.text,
+                                          );
+                                          final messageTextStyle = TextStyle(
+                                            color: isMine
+                                                ? Colors.black87
+                                                : const Color(0xFF324D67),
+                                          );
+                                          final timeStyle = Theme.of(context)
+                                                  .textTheme
+                                                  .bodySmall
+                                                  ?.copyWith(color: Colors.black54) ??
+                                              const TextStyle(
+                                                fontSize: 12,
+                                                color: Colors.black54,
+                                              );
+
+                                          final metaWidget = Row(
+                                            mainAxisSize: MainAxisSize.min,
+                                            children: [
+                                              Text(timeText, style: timeStyle),
+                                              const SizedBox(width: 6),
+                                              _buildMessageMetaSlot(
+                                                isMine: isMine,
+                                                showHoverMenuButton:
+                                                    showHoverMenuButton,
+                                                otherSlotId: otherSlotId,
+                                                message: message,
+                                              ),
+                                            ],
+                                          );
+
+                                          // Metnin sonuna görünmez placeholder ekleyerek
+                                          // meta için yer ayrılır; meta Stack ile
+                                          // her zaman sağ-alt köşeye sabitlenir.
+                                          return Stack(
+                                            children: [
+                                              Text.rich(
+                                                TextSpan(
+                                                  style: messageTextStyle,
+                                                  children: [
+                                                    TextSpan(text: messageText),
+                                                    const WidgetSpan(
+                                                      alignment:
+                                                          PlaceholderAlignment
+                                                              .middle,
+                                                      child: SizedBox(
+                                                        width: 72,
+                                                        height: 20,
+                                                      ),
+                                                    ),
+                                                  ],
+                                                ),
+                                              ),
+                                              Positioned(
+                                                bottom: 0,
+                                                right: 0,
+                                                child: metaWidget,
+                                              ),
+                                            ],
+                                          );
+                                        },
+                                      ),
+                                    ],
+                                  ),
+                                ),
                               ),
                             ),
                           ),
-                          const SizedBox(width: 8),
                           ConstrainedBox(
                             constraints: const BoxConstraints(maxWidth: 90),
                             child: Text(
@@ -1098,6 +1541,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
               if (text.isEmpty) {
                 return;
               }
+              final replyTarget = _replyTarget;
               await ref
                   .read(chatServiceProvider)
                   .sendMessage(
@@ -1105,9 +1549,17 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
                     slotId: widget.session.slotId,
                     nick: widget.session.nick,
                     text: text,
+                    replyToMessageId: replyTarget?.id,
+                    replyToSenderNick: replyTarget?.senderNick,
+                    replyToText: replyTarget == null
+                        ? null
+                        : _replyPreviewText(
+                            EmojiShortcodes.emojify(replyTarget.text),
+                          ),
                   );
               _composerController.clear();
               _charLimitWarningVisible = false;
+              _clearReplyTarget();
             },
             sendEnabled: true,
             showHeader: false,
@@ -1136,6 +1588,13 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
             remoteCursorColor: const Color(0xFF0A4F96),
             helperText: 'Mesajı yalnızca kendi alanından gönderebilirsin',
             compact: true,
+            replyPreviewNick: _replyTarget?.senderNick,
+            replyPreviewText: _replyTarget == null
+                ? null
+                : _replyPreviewText(
+                    EmojiShortcodes.emojify(_replyTarget!.text),
+                  ),
+            onClearReply: _clearReplyTarget,
           ),
           Padding(
             padding: const EdgeInsets.fromLTRB(12, 4, 12, 8),

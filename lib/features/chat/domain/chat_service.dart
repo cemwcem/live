@@ -24,12 +24,18 @@ class ChatService {
     required String slotId,
     required String nick,
     required String text,
+    String? replyToMessageId,
+    String? replyToSenderNick,
+    String? replyToText,
   }) {
     return _repository.sendMessage(
       channelName: channelName,
       slotId: slotId,
       nick: nick,
       text: text,
+      replyToMessageId: replyToMessageId,
+      replyToSenderNick: replyToSenderNick,
+      replyToText: replyToText,
     );
   }
 
