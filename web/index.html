@@ -42,5 +42,31 @@
     * https://docs.flutter.dev/platform-integration/web/initialization
   -->
   <script src="flutter_bootstrap.js" async></script>
+
+  <script>
+    // Yeni sürüm kontrolü: version.json'ı periyodik olarak kontrol et.
+    // Deploy sonrasında kullanıcı sayfayı manuel yenilemek zorunda kalmaz.
+    (function () {
+      var currentVersion = null;
+      var CHECK_INTERVAL_MS = 60000; // Her 60 saniyede bir kontrol.
+
+      function fetchVersion() {
+        fetch('/version.json?_=' + Date.now(), { cache: 'no-store' })
+          .then(function (r) { return r.json(); })
+          .then(function (data) {
+            var v = data && (data.appVersion || data.version || JSON.stringify(data));
+            if (currentVersion === null) {
+              currentVersion = v;
+            } else if (v && v !== currentVersion) {
+              window.location.reload();
+            }
+          })
+          .catch(function () {});
+      }
+
+      fetchVersion();
+      setInterval(fetchVersion, CHECK_INTERVAL_MS);
+    })();
+  </script>
 </body>
 </html>
