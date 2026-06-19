@@ -176,8 +176,12 @@ class LiveTypingBox extends StatelessWidget {
                 if (showSendButton && sendInline) ...[
                   const SizedBox(width: 8),
                   FilledButton(
+                    style: FilledButton.styleFrom(
+                      minimumSize: const Size(36, 36),
+                      padding: const EdgeInsets.all(0),
+                    ),
                     onPressed: sendEnabled ? onSend : null,
-                    child: const Text('Gönder'),
+                    child: const Icon(Icons.arrow_upward_rounded, size: 18),
                   ),
                 ],
               ],
@@ -189,8 +193,12 @@ class LiveTypingBox extends StatelessWidget {
               Align(
                 alignment: Alignment.centerRight,
                 child: FilledButton(
+                  style: FilledButton.styleFrom(
+                    minimumSize: const Size(36, 36),
+                    padding: const EdgeInsets.all(0),
+                  ),
                   onPressed: sendEnabled ? onSend : null,
-                  child: const Text('Gönder'),
+                  child: const Icon(Icons.arrow_upward_rounded, size: 18),
                 ),
               ),
             ],

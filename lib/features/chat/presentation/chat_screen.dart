@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../core/app_release.dart';
 import '../../../core/models/message_model.dart';
 import '../../../core/utils/emoji_shortcodes.dart';
 import '../../../core/utils/session_storage.dart';
@@ -304,6 +305,26 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     _charLimitWarningVisible = true;
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(content: Text('Karakter sınırına ulaşıldı.')),
+    );
+  }
+
+  Future<void> _showAboutDialog() async {
+    await showDialog<void>(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: const Text('Hakkında'),
+          content: Text(
+            'live chat\nRelease: ${AppRelease.name} (${AppRelease.version})\nDeploy tarihi: ${AppRelease.deployedAt}\n\nNot: Deploy oncesi release bilgisi guncellenir.',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text('Kapat'),
+            ),
+          ],
+        );
+      },
     );
   }
 
@@ -824,6 +845,8 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
                   );
                   return;
                 }
+              } else if (value == 'about' && context.mounted) {
+                await _showAboutDialog();
               }
             },
             itemBuilder: (context) => [
@@ -832,6 +855,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
                 value: 'cleanup',
                 child: Text('Mesajları temizle'),
               ),
+              const PopupMenuItem(value: 'about', child: Text('Hakkında')),
               const PopupMenuItem(value: 'logout', child: Text('Main Page')),
             ],
           ),

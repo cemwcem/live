@@ -9,10 +9,10 @@
         },
         "slots": {
           "slot1": {
-            ".validate": "newData.hasChildren(['nick', 'sessionId', 'online', 'lastSeen'])"
+            ".validate": "newData.hasChildren(['nick', 'sessionId', 'online', 'lastSeen']) && (!newData.child('clientInfo').exists() || newData.child('clientInfo').hasChildren(['appVersion', 'platform']))"
           },
           "slot2": {
-            ".validate": "newData.hasChildren(['nick', 'sessionId', 'online', 'lastSeen'])"
+            ".validate": "newData.hasChildren(['nick', 'sessionId', 'online', 'lastSeen']) && (!newData.child('clientInfo').exists() || newData.child('clientInfo').hasChildren(['appVersion', 'platform']))"
           }
         },
         "liveTyping": {
@@ -20,10 +20,21 @@
             ".validate": "newData.isString()"
           }
         },
+        "liveCursor": {
+          "$slotId": {
+            ".validate": "newData.hasChildren(['nick', 'offset', 'updatedAt'])"
+          }
+        },
         "messages": {
           "$messageId": {
             ".validate": "newData.hasChildren(['senderNick', 'senderSlotId', 'text', 'timestamp', 'deliveredSlots', 'readSlots'])"
           }
+        },
+        "messageCleanupRequest": {
+          ".validate": "newData.hasChildren(['requestId', 'requesterSessionId', 'requesterSlotId', 'requesterNick', 'requestedAt', 'keepDurationMs', 'cleanupMode'])"
+        },
+        "messageCleanupResult": {
+          ".validate": "newData.hasChildren(['requestId', 'requesterSessionId', 'requesterNick', 'responderNick', 'status', 'completedAt', 'deletedCount'])"
         }
       }
     }

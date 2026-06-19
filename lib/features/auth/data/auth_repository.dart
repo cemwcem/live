@@ -2,6 +2,7 @@ import 'package:firebase_database/firebase_database.dart';
 
 import '../../../core/firebase/firebase_service.dart';
 import '../../../core/utils/hash_utils.dart';
+import '../../../core/utils/client_info.dart';
 import '../domain/auth_service.dart';
 
 abstract class AuthRepository {
@@ -181,11 +182,13 @@ class FirebaseAuthRepository implements AuthRepository {
     String sessionId,
     int now,
   ) async {
+    final clientInfo = await ClientInfo.collect();
     await channelRef.child('slots/$slotId').set({
       'nick': nick,
       'sessionId': sessionId,
       'online': true,
       'lastSeen': now,
+      'clientInfo': clientInfo,
     });
   }
 
