@@ -3,6 +3,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../core/models/channel_model.dart';
 import '../../../core/models/cursor_presence_model.dart';
 import '../../../core/models/message_model.dart';
+import '../../../core/models/message_cleanup_request_model.dart';
+import '../../../core/models/message_cleanup_result_model.dart';
 import '../../../core/models/slot_model.dart';
 import '../../auth/domain/auth_service.dart';
 import '../data/chat_repository.dart';
@@ -24,6 +26,26 @@ final chatChannelProvider =
 final chatMessagesProvider =
     StreamProvider.family<List<MessageModel>, ChannelSession>((ref, session) {
       return ref.watch(chatServiceProvider).watchMessages(session.channelName);
+    });
+
+final chatMessageCleanupRequestProvider =
+    StreamProvider.family<MessageCleanupRequestModel?, ChannelSession>((
+      ref,
+      session,
+    ) {
+      return ref
+          .watch(chatServiceProvider)
+          .watchMessageCleanupRequest(session.channelName);
+    });
+
+final chatMessageCleanupResultProvider =
+    StreamProvider.family<MessageCleanupResultModel?, ChannelSession>((
+      ref,
+      session,
+    ) {
+      return ref
+          .watch(chatServiceProvider)
+          .watchMessageCleanupResult(session.channelName);
     });
 
 final chatTypingProvider =

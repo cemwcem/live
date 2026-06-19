@@ -7,13 +7,15 @@ class EmojiHelpScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final entries = EmojiShortcodes.uniqueEntries;
+
     return Scaffold(
       appBar: AppBar(
         title: const Text('Emojiler'),
       ),
       body: ListView.separated(
         padding: const EdgeInsets.all(16),
-        itemCount: EmojiShortcodes.entries.length + 1,
+        itemCount: entries.length + 1,
         separatorBuilder: (_, _) => const SizedBox(height: 8),
         itemBuilder: (context, index) {
           if (index == 0) {
@@ -27,7 +29,7 @@ class EmojiHelpScreen extends StatelessWidget {
             );
           }
 
-          final entry = EmojiShortcodes.entries[index - 1];
+          final entry = entries[index - 1];
           return ListTile(
             tileColor: Theme.of(context).colorScheme.surfaceContainerLow,
             shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),

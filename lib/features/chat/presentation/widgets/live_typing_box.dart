@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 class LiveTypingBox extends StatelessWidget {
   const LiveTypingBox({
@@ -31,6 +32,8 @@ class LiveTypingBox extends StatelessWidget {
     this.remoteCursorNick,
     this.remoteCursorOffset,
     this.remoteCursorColor,
+    this.maxLength,
+    this.onMaxLengthReached,
   });
 
   final String label;
@@ -59,6 +62,8 @@ class LiveTypingBox extends StatelessWidget {
   final String? remoteCursorNick;
   final int? remoteCursorOffset;
   final Color? remoteCursorColor;
+  final int? maxLength;
+  final VoidCallback? onMaxLengthReached;
 
   @override
   Widget build(BuildContext context) {
@@ -67,7 +72,7 @@ class LiveTypingBox extends StatelessWidget {
         .toDouble();
     final resolvedBorderColor = inputBorderColor ?? Colors.black26;
     final fieldDecoration = InputDecoration(
-      hintText: 'Canli yazi burada akar',
+      hintText: 'Mesaj',
       isDense: compact,
       filled: true,
       fillColor: inputFillColor ?? Theme.of(context).colorScheme.surface,
@@ -107,6 +112,8 @@ class LiveTypingBox extends StatelessWidget {
       remoteCursorNick: remoteCursorNick,
       remoteCursorOffset: remoteCursorOffset,
       remoteCursorColor: remoteCursorColor,
+      maxLength: maxLength,
+      onMaxLengthReached: onMaxLengthReached,
     );
 
     final trailingBadge = ConstrainedBox(
@@ -211,6 +218,8 @@ class _CursorNickTextField extends StatefulWidget {
     required this.remoteCursorNick,
     required this.remoteCursorOffset,
     required this.remoteCursorColor,
+    required this.maxLength,
+    required this.onMaxLengthReached,
     this.textTransformer,
   });
 
@@ -229,6 +238,8 @@ class _CursorNickTextField extends StatefulWidget {
   final String? remoteCursorNick;
   final int? remoteCursorOffset;
   final Color? remoteCursorColor;
+  final int? maxLength;
+  final VoidCallback? onMaxLengthReached;
   final String Function(String text)? textTransformer;
 
   @override
@@ -398,6 +409,8 @@ class _CursorNickTextFieldState extends State<_CursorNickTextField> {
               readOnly: widget.readOnly,
               minLines: widget.minLines,
               maxLines: widget.maxLines,
+              maxLength: widget.maxLength,
+              maxLengthEnforcement: MaxLengthEnforcement.enforced,
               style: widget.style,
               onChanged: (value) {
                 final transformed =
@@ -410,9 +423,21 @@ class _CursorNickTextFieldState extends State<_CursorNickTextField> {
                     ),
                   );
                 }
+                final maxLength = widget.maxLength;
+                if (maxLength != null && transformed.length >= maxLength) {
+                  widget.onMaxLengthReached?.call();
+                }
                 widget.onChanged(transformed);
               },
-              decoration: widget.decoration,
+              decoration: widget.decoration.copyWith(counterText: ''),
+              buildCounter: (
+                context, {
+                required int currentLength,
+                required bool isFocused,
+                required int? maxLength,
+              }) {
+                return null;
+              },
               onSubmitted: widget.onSubmitted,
             ),
             if (showTag)

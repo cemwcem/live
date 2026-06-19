@@ -1,6 +1,8 @@
 import '../../../core/models/channel_model.dart';
 import '../../../core/models/cursor_presence_model.dart';
 import '../../../core/models/message_model.dart';
+import '../../../core/models/message_cleanup_request_model.dart';
+import '../../../core/models/message_cleanup_result_model.dart';
 import '../../../core/models/slot_model.dart';
 import '../data/chat_repository.dart';
 
@@ -28,6 +30,76 @@ class ChatService {
       slotId: slotId,
       nick: nick,
       text: text,
+    );
+  }
+
+  Future<int> deleteMessagesByRetention({
+    required String channelName,
+    Duration? keepDuration,
+    int? referenceTimestamp,
+  }) {
+    return _repository.deleteMessagesByRetention(
+      channelName: channelName,
+      keepDuration: keepDuration,
+      referenceTimestamp: referenceTimestamp,
+    );
+  }
+
+  Future<int> deleteRecentMessagesWithin({
+    required String channelName,
+    required Duration within,
+    int? referenceTimestamp,
+  }) {
+    return _repository.deleteRecentMessagesWithin(
+      channelName: channelName,
+      within: within,
+      referenceTimestamp: referenceTimestamp,
+    );
+  }
+
+  Stream<MessageCleanupRequestModel?> watchMessageCleanupRequest(
+    String channelName,
+  ) {
+    return _repository.watchMessageCleanupRequest(channelName: channelName);
+  }
+
+  Future<void> createMessageCleanupRequest({
+    required String channelName,
+    required String requesterSessionId,
+    required String requesterSlotId,
+    required String requesterNick,
+    Duration? keepDuration,
+    bool deleteWithinWindow = false,
+  }) {
+    return _repository.createMessageCleanupRequest(
+      channelName: channelName,
+      requesterSessionId: requesterSessionId,
+      requesterSlotId: requesterSlotId,
+      requesterNick: requesterNick,
+      keepDuration: keepDuration,
+      deleteWithinWindow: deleteWithinWindow,
+    );
+  }
+
+  Stream<MessageCleanupResultModel?> watchMessageCleanupResult(
+    String channelName,
+  ) {
+    return _repository.watchMessageCleanupResult(channelName: channelName);
+  }
+
+  Future<int?> respondMessageCleanupRequest({
+    required String channelName,
+    required String requestId,
+    required String responderSlotId,
+    required String responderNick,
+    required bool approve,
+  }) {
+    return _repository.respondMessageCleanupRequest(
+      channelName: channelName,
+      requestId: requestId,
+      responderSlotId: responderSlotId,
+      responderNick: responderNick,
+      approve: approve,
     );
   }
 

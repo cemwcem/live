@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'core/firebase/firebase_service.dart';
+import 'core/utils/session_storage.dart';
 import 'features/auth/domain/auth_service.dart';
 import 'features/auth/presentation/login_screen.dart';
 import 'features/chat/presentation/chat_screen.dart';
@@ -17,7 +18,13 @@ final restoredSessionProvider = FutureProvider<ChannelSession?>((ref) async {
     return null;
   }
 
-  return ref.read(authServiceProvider).resumeLastSession();
+  try {
+    return await ref.read(authServiceProvider).resumeLastSession();
+  } catch (_) {
+    // Stale local session data should not be treated as a Firebase setup error.
+    await SessionStorage.clearActiveSession();
+    return null;
+  }
 });
 
 class LiveChatApp extends ConsumerWidget {
@@ -47,7 +54,7 @@ class LiveChatApp extends ConsumerWidget {
 
           return ref.watch(restoredSessionProvider).when(
                 loading: () => const _SplashScreen(),
-                error: (error, stackTrace) => _SetupRequiredScreen(error: error.toString()),
+                error: (error, stackTrace) => const LoginScreen(),
                 data: (session) {
                   if (session != null) {
                     return ChatScreen(session: session);

@@ -9,6 +9,7 @@ import '../../../core/utils/session_storage.dart';
 import '../../auth/domain/auth_service.dart';
 import '../../auth/presentation/login_screen.dart';
 import 'emoji_help_screen.dart';
+import 'message_cleanup_screen.dart';
 import 'chat_provider.dart';
 import 'widgets/live_typing_box.dart';
 
@@ -23,16 +24,28 @@ class ChatScreen extends ConsumerStatefulWidget {
 
 class _ChatScreenState extends ConsumerState<ChatScreen>
     with WidgetsBindingObserver {
+  static const int _maxMessageChars = 2000;
+  static const int _typingIndicatorGraceMs = 2200;
+
   final _composerController = TextEditingController();
   final _peerTypingController = TextEditingController();
   final _scrollController = ScrollController();
   final List<MessageModel> _messageItems = [];
   final Set<String> _messageIds = {};
   Timer? _heartbeatTimer;
+  Timer? _typingOwnDebounce;
+  Timer? _typingPeerDebounce;
+  Timer? _cursorOwnDebounce;
+  Timer? _cursorPeerDebounce;
   bool _initialMessagesLoaded = false;
   bool _loadingOlderMessages = false;
   bool _isScreenActive = true;
   int? _oldestTimestamp;
+  String? _activeCleanupRequestDialogId;
+  String? _lastHandledCleanupResultId;
+  bool _charLimitWarningVisible = false;
+  int? _remoteOwnTypingLastActiveMs;
+  int? _remoteOtherTypingLastActiveMs;
 
   @override
   void initState() {
@@ -56,6 +69,10 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _heartbeatTimer?.cancel();
+    _typingOwnDebounce?.cancel();
+    _typingPeerDebounce?.cancel();
+    _cursorOwnDebounce?.cancel();
+    _cursorPeerDebounce?.cancel();
     _scrollController.dispose();
     _peerTypingController.dispose();
     _composerController.dispose();
@@ -280,6 +297,199 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     return 'Son aktif: ${_formatDayHeader(date)} ${_formatTime24(date)}';
   }
 
+  void _showMessageLimitWarning() {
+    if (!mounted || _charLimitWarningVisible) {
+      return;
+    }
+    _charLimitWarningVisible = true;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Karakter sınırına ulaşıldı.')),
+    );
+  }
+
+  bool _isSlotEffectivelyOnline({
+    required bool? online,
+    required int? lastSeen,
+    required int nowMillis,
+  }) {
+    if (online == true) {
+      return true;
+    }
+    if (lastSeen == null || lastSeen <= 0) {
+      return false;
+    }
+    return nowMillis - lastSeen <= 45000;
+  }
+
+  void _scheduleTypingUpdate({
+    required String targetSlotId,
+    required String text,
+  }) {
+    final debounce = targetSlotId == widget.session.slotId
+        ? _typingOwnDebounce
+        : _typingPeerDebounce;
+    debounce?.cancel();
+
+    final timer = Timer(const Duration(milliseconds: 180), () {
+      ref
+          .read(chatServiceProvider)
+          .updateTyping(
+            channelName: widget.session.channelName,
+            slotId: targetSlotId,
+            text: text,
+          );
+    });
+
+    if (targetSlotId == widget.session.slotId) {
+      _typingOwnDebounce = timer;
+    } else {
+      _typingPeerDebounce = timer;
+    }
+  }
+
+  void _scheduleCursorUpdate({
+    required String targetSlotId,
+    required String nick,
+    required int offset,
+  }) {
+    final debounce = targetSlotId == widget.session.slotId
+        ? _cursorOwnDebounce
+        : _cursorPeerDebounce;
+    debounce?.cancel();
+
+    final timer = Timer(const Duration(milliseconds: 120), () {
+      ref
+          .read(chatServiceProvider)
+          .updateCursor(
+            channelName: widget.session.channelName,
+            slotId: targetSlotId,
+            nick: nick,
+            offset: offset,
+          );
+    });
+
+    if (targetSlotId == widget.session.slotId) {
+      _cursorOwnDebounce = timer;
+    } else {
+      _cursorPeerDebounce = timer;
+    }
+  }
+
+  String _cleanupOptionTitle(Duration? keepDuration) {
+    if (keepDuration == null) {
+      return 'Hepsi silinsin';
+    }
+    if (keepDuration.inHours == 1) {
+      return 'Son 1 saat kalsın';
+    }
+    if (keepDuration.inHours == 6) {
+      return 'Son 6 saat kalsın';
+    }
+    if (keepDuration.inHours == 24) {
+      return 'Son 24 saat kalsın';
+    }
+    if (keepDuration.inDays == 7) {
+      return 'Son 7 gün kalsın';
+    }
+    return 'Mesaj temizleme talebi';
+  }
+
+  String _durationLabel(Duration? duration) {
+    if (duration == null) {
+      return '';
+    }
+    final hours = duration.inHours;
+    final minutes = duration.inMinutes.remainder(60);
+    if (hours > 0 && minutes > 0) {
+      return '$hours saat $minutes dakika';
+    }
+    if (hours > 0) {
+      return '$hours saat';
+    }
+    return '$minutes dakika';
+  }
+
+  void _showIncomingCleanupDialogIfNeeded({
+    required String requestId,
+    required String requesterNick,
+    required Duration? keepDuration,
+    required bool deleteWithinWindow,
+    required int requestedAt,
+  }) {
+    if (_activeCleanupRequestDialogId == requestId || !mounted) {
+      return;
+    }
+
+    _activeCleanupRequestDialogId = requestId;
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      if (!mounted) {
+        return;
+      }
+
+      final requestDate = requestedAt > 0
+          ? DateTime.fromMillisecondsSinceEpoch(requestedAt)
+          : DateTime.now();
+      final requestTimeLabel =
+          '${_formatDayHeader(requestDate)} ${_formatTime24(requestDate)}';
+
+      final approved = await showDialog<bool>(
+        context: context,
+        barrierDismissible: false,
+        builder: (context) {
+          return AlertDialog(
+            title: const Text('Mesaj silme onayı'),
+            content: Text(
+              '$requesterNick mesajları temizlemek istiyor.\n\nSeçim: ${deleteWithinWindow ? 'Son ${_durationLabel(keepDuration)} içindekiler silinsin' : _cleanupOptionTitle(keepDuration)}\nTalep zamanı: $requestTimeLabel\n\nOnaylıyor musun?',
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(context).pop(false),
+                child: const Text('Reddet'),
+              ),
+              FilledButton(
+                onPressed: () => Navigator.of(context).pop(true),
+                child: const Text('Onayla'),
+              ),
+            ],
+          );
+        },
+      );
+
+      if (!mounted) {
+        return;
+      }
+
+      final deletedCount = await ref
+          .read(chatServiceProvider)
+          .respondMessageCleanupRequest(
+            channelName: widget.session.channelName,
+            requestId: requestId,
+            responderSlotId: widget.session.slotId,
+            responderNick: widget.session.nick,
+            approve: approved == true,
+          );
+
+      if (!mounted) {
+        return;
+      }
+
+      if (approved == true) {
+        final text = deletedCount != null && deletedCount > 0
+            ? '$deletedCount mesaj silindi.'
+            : 'Mesajlar temizlendi.';
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(text)));
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Mesaj silme talebini reddettiniz.')),
+        );
+      }
+
+      _initialMessagesLoaded = false;
+      await _loadInitialMessages();
+      _activeCleanupRequestDialogId = null;
+    });
+  }
+
   IconData _statusIconForMessage({
     required MessageModel message,
     required String otherSlotId,
@@ -349,6 +559,12 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
         slotId: widget.session.slotId,
       )),
     );
+    final otherTypingState = ref.watch(
+      chatTypingProvider((
+        channelName: widget.session.channelName,
+        slotId: otherSlotId,
+      )),
+    );
     final otherOnlineState = ref.watch(
       chatOnlineProvider((
         channelName: widget.session.channelName,
@@ -375,9 +591,20 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     );
 
     final otherNick = channel?.slots[otherSlotId]?.nick ?? 'Karşı taraf';
-    final ownNick = widget.session.nick;
-    final isOtherOnline = otherOnlineState.value ?? false;
-    final otherLastSeen = otherSlotState.value?.lastSeen;
+    final otherSlot = otherSlotState.value;
+    final otherLastSeen = otherSlot?.lastSeen;
+    final ownNick =
+      channel?.slots[widget.session.slotId]?.nick ?? widget.session.nick;
+    final isOtherOnline = _isSlotEffectivelyOnline(
+      online: otherSlot?.online ?? otherOnlineState.value,
+      lastSeen: otherLastSeen,
+      nowMillis: DateTime.now().millisecondsSinceEpoch,
+    );
+    final statusText = isOtherOnline
+      ? (otherLastSeen != null && otherLastSeen > 0
+          ? 'Şu an aktif (${_formatTime24(DateTime.fromMillisecondsSinceEpoch(otherLastSeen))})'
+          : 'Şu an aktif')
+      : _formatLastSeenText(otherLastSeen);
     final nowMillis = DateTime.now().millisecondsSinceEpoch;
     final ownSlotCursor = ownCursorState.value;
     final otherSlotCursor = otherCursorState.value;
@@ -392,6 +619,29 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
         otherSlotCursor.nick != ownNick &&
         otherSlotCursor.offset >= 0 &&
         nowMillis - otherSlotCursor.updatedAt <= 12000;
+    if (showRemoteCursorOnOwnSlot) {
+      _remoteOwnTypingLastActiveMs = nowMillis;
+    }
+    if (showRemoteCursorOnOtherSlot) {
+      _remoteOtherTypingLastActiveMs = nowMillis;
+    }
+
+    final ownAreaText = ownTypingState.value ?? '';
+    final otherAreaText = otherTypingState.value ?? '';
+    final showRemoteTypingOwnArea =
+        ownAreaText.isNotEmpty &&
+        _remoteOwnTypingLastActiveMs != null &&
+        nowMillis - _remoteOwnTypingLastActiveMs! <= _typingIndicatorGraceMs;
+    final showRemoteTypingOtherArea =
+        otherAreaText.isNotEmpty &&
+        _remoteOtherTypingLastActiveMs != null &&
+        nowMillis - _remoteOtherTypingLastActiveMs! <= _typingIndicatorGraceMs;
+    final remoteTypingOwnAreaText = showRemoteTypingOwnArea
+        ? '$otherNick yazıyor: ${ownAreaText.length} karakter.'
+        : null;
+    final remoteTypingOtherAreaText = showRemoteTypingOtherArea
+        ? '$otherNick yazıyor: ${otherAreaText.length} karakter.'
+        : null;
 
     ref.listen<AsyncValue<List<MessageModel>>>(
       chatMessagesProvider(widget.session),
@@ -406,6 +656,60 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
         }
       },
     );
+
+    ref.listen(chatMessageCleanupRequestProvider(widget.session), (
+      previous,
+      next,
+    ) {
+      final request = next.value;
+      if (request == null) {
+        _activeCleanupRequestDialogId = null;
+        return;
+      }
+
+      if (request.requesterSlotId == widget.session.slotId) {
+        return;
+      }
+
+      _showIncomingCleanupDialogIfNeeded(
+        requestId: request.requestId,
+        requesterNick: request.requesterNick,
+        keepDuration: request.keepDuration,
+        deleteWithinWindow: request.deleteWithinWindow,
+        requestedAt: request.requestedAt,
+      );
+    });
+
+    ref.listen(chatMessageCleanupResultProvider(widget.session), (
+      previous,
+      next,
+    ) async {
+      final result = next.value;
+      if (result == null) {
+        return;
+      }
+      if (result.requesterSessionId != widget.session.sessionId) {
+        return;
+      }
+      if (_lastHandledCleanupResultId == result.requestId) {
+        return;
+      }
+
+      _lastHandledCleanupResultId = result.requestId;
+      if (!mounted) {
+        return;
+      }
+
+      final text = result.isApproved
+          ? 'Silme onaylandı (${result.responderNick}) ve tamamlandı. ${result.deletedCount ?? 0} mesaj silindi.'
+          : 'Silme talebi ${result.responderNick} tarafından reddedildi.';
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(text)));
+
+      if (result.isApproved) {
+        _initialMessagesLoaded = false;
+        await _loadInitialMessages();
+      }
+    });
 
     ref.listen<AsyncValue<String?>>(
       chatTypingProvider((
@@ -441,7 +745,34 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
 
     return Scaffold(
       appBar: AppBar(
-        title: Text('live • ${widget.session.nick}'),
+        title: Row(
+          children: [
+            Expanded(
+              flex: 3,
+              child: Text(
+                '#${widget.session.channelName}   $otherNick: ${isOtherOnline ? '🟢 Online' : '🔴 Offline'}',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                  fontSize: 12,
+                ),
+              ),
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              flex: 2,
+              child: Text(
+                statusText,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                textAlign: TextAlign.right,
+                style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                  fontSize: 12,
+                ),
+              ),
+            ),
+          ],
+        ),
         actions: [
           PopupMenuButton<String>(
             onSelected: (value) async {
@@ -468,10 +799,39 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
                     builder: (_) => const EmojiHelpScreen(),
                   ),
                 );
+              } else if (value == 'cleanup' && context.mounted) {
+                final cleanupResult =
+                    await Navigator.of(context).push<Map<String, Object?>>(
+                  MaterialPageRoute<Map<String, Object?>>(
+                    builder: (_) => MessageCleanupScreen(
+                      session: widget.session,
+                    ),
+                  ),
+                );
+
+                if (!mounted || cleanupResult == null) {
+                  return;
+                }
+
+                final type = cleanupResult['type'] as String?;
+                if (type == 'request') {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(
+                      content: Text(
+                        'Silme talebi gönderildi. Karşı tarafın onayı bekleniyor.',
+                      ),
+                    ),
+                  );
+                  return;
+                }
               }
             },
             itemBuilder: (context) => [
               const PopupMenuItem(value: 'emojis', child: Text('Emojiler')),
+              const PopupMenuItem(
+                value: 'cleanup',
+                child: Text('Mesajları temizle'),
+              ),
               const PopupMenuItem(value: 'logout', child: Text('Main Page')),
             ],
           ),
@@ -489,13 +849,12 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
             enabled: true,
             readOnly: false,
             onChanged: (value) {
-              ref
-                  .read(chatServiceProvider)
-                  .updateTyping(
-                    channelName: widget.session.channelName,
-                    slotId: otherSlotId,
-                    text: value,
-                  );
+              if (value.length >= _maxMessageChars) {
+                _showMessageLimitWarning();
+              } else {
+                _charLimitWarningVisible = false;
+              }
+              _scheduleTypingUpdate(targetSlotId: otherSlotId, text: value);
             },
             textTransformer: EmojiShortcodes.emojify,
             onSend: null,
@@ -503,6 +862,8 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
             showSendButton: false,
             showHeader: false,
             showInlineBadge: true,
+            maxLength: _maxMessageChars,
+            onMaxLengthReached: _showMessageLimitWarning,
             showCursorNick: true,
             cursorNick: ownNick,
             containerColor: const Color(0xFFE9EFF6),
@@ -510,14 +871,11 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
             inputBorderColor: const Color(0xFFBCCBDB),
             inputTextColor: const Color(0xFF3E5A77),
             onCursorChanged: (offset) {
-              ref
-                  .read(chatServiceProvider)
-                  .updateCursor(
-                    channelName: widget.session.channelName,
-                    slotId: otherSlotId,
-                    nick: ownNick,
-                    offset: offset,
-                  );
+              _scheduleCursorUpdate(
+                targetSlotId: otherSlotId,
+                nick: ownNick,
+                offset: offset,
+              );
             },
             remoteCursorNick: showRemoteCursorOnOtherSlot
                 ? otherSlotCursor.nick
@@ -700,13 +1058,15 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
             enabled: true,
             readOnly: false,
             onChanged: (value) {
-              ref
-                  .read(chatServiceProvider)
-                  .updateTyping(
-                    channelName: widget.session.channelName,
-                    slotId: widget.session.slotId,
-                    text: value,
-                  );
+              if (value.length >= _maxMessageChars) {
+                _showMessageLimitWarning();
+              } else {
+                _charLimitWarningVisible = false;
+              }
+              _scheduleTypingUpdate(
+                targetSlotId: widget.session.slotId,
+                text: value,
+              );
             },
             textTransformer: EmojiShortcodes.emojify,
             onSend: () async {
@@ -723,10 +1083,13 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
                     text: text,
                   );
               _composerController.clear();
+              _charLimitWarningVisible = false;
             },
             sendEnabled: true,
             showHeader: false,
             sendInline: true,
+            maxLength: _maxMessageChars,
+            onMaxLengthReached: _showMessageLimitWarning,
             showCursorNick: true,
             cursorNick: ownNick,
             containerColor: const Color(0xFFEAF8EF),
@@ -734,14 +1097,11 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
             inputBorderColor: const Color(0xFFBFDCCB),
             inputTextColor: Colors.black87,
             onCursorChanged: (offset) {
-              ref
-                  .read(chatServiceProvider)
-                  .updateCursor(
-                    channelName: widget.session.channelName,
-                    slotId: widget.session.slotId,
-                    nick: ownNick,
-                    offset: offset,
-                  );
+              _scheduleCursorUpdate(
+                targetSlotId: widget.session.slotId,
+                nick: ownNick,
+                offset: offset,
+              );
             },
             remoteCursorNick: showRemoteCursorOnOwnSlot
                 ? ownSlotCursor.nick
@@ -758,30 +1118,20 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    Text(
-                      '$otherNick: ${isOtherOnline ? '🟢 Online' : '🔴 Offline'}',
-                      style: TextStyle(
-                        fontSize: 12,
-                        color: isOtherOnline ? Colors.green : Colors.grey,
-                      ),
-                    ),
-                    Text(
-                      isOtherOnline
-                          ? (otherLastSeen != null && otherLastSeen > 0
-                                ? 'Şu an aktif (${_formatTime24(DateTime.fromMillisecondsSinceEpoch(otherLastSeen))})'
-                                : 'Şu an aktif')
-                          : _formatLastSeenText(otherLastSeen),
-                      style: const TextStyle(fontSize: 12),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 4),
-                if ((ownTypingState.value ?? '').isNotEmpty)
+                if (remoteTypingOwnAreaText != null)
                   Text(
-                    '$ownNick yazıyor: ${(ownTypingState.value ?? '').length} karakter',
+                    remoteTypingOwnAreaText,
+                    style: const TextStyle(
+                      fontSize: 11,
+                      fontStyle: FontStyle.italic,
+                    ),
+                  ),
+                if (remoteTypingOwnAreaText != null &&
+                    remoteTypingOtherAreaText != null)
+                  const SizedBox(height: 2),
+                if (remoteTypingOtherAreaText != null)
+                  Text(
+                    remoteTypingOtherAreaText,
                     style: const TextStyle(
                       fontSize: 11,
                       fontStyle: FontStyle.italic,

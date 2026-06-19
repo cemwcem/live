@@ -29,6 +29,17 @@ class EmojiShortcodes {
     EmojiEntry(code: ":'(", emoji: '😢', label: 'Aglama'),
   ];
 
+  static List<EmojiEntry> get uniqueEntries {
+    final seenEmoji = <String>{};
+    final filtered = <EmojiEntry>[];
+    for (final entry in entries) {
+      if (seenEmoji.add(entry.emoji)) {
+        filtered.add(entry);
+      }
+    }
+    return filtered;
+  }
+
   static String emojify(String text) {
     var result = text;
     for (final entry in entries) {
