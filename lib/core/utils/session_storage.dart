@@ -20,6 +20,13 @@ class SessionStorage {
     return 'session_${channelName.trim()}_${nick.trim()}';
   }
 
+  static String _cleanupResultSeenKey({
+    required String channelName,
+    required String sessionId,
+  }) {
+    return 'cleanup_result_seen_${channelName.trim()}_${sessionId.trim()}';
+  }
+
   static Future<String> readOrCreateSessionId({
     required String channelName,
     required String nick,
@@ -110,5 +117,27 @@ class SessionStorage {
   static Future<void> clearActiveSession() async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove('active_session');
+  }
+
+  static Future<void> saveLastShownCleanupResultId({
+    required String channelName,
+    required String sessionId,
+    required String requestId,
+  }) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(
+      _cleanupResultSeenKey(channelName: channelName, sessionId: sessionId),
+      requestId,
+    );
+  }
+
+  static Future<String?> readLastShownCleanupResultId({
+    required String channelName,
+    required String sessionId,
+  }) async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getString(
+      _cleanupResultSeenKey(channelName: channelName, sessionId: sessionId),
+    );
   }
 }

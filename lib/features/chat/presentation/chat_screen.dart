@@ -47,7 +47,12 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
   int? _oldestTimestamp;
   String? _activeCleanupRequestDialogId;
   String? _lastHandledCleanupResultId;
-  bool _replaceFromNextIncoming = false;
+  String? _lastShownCleanupResultId;
+  String? _ownCleanupRequestId;
+  int? _ownCleanupRequestedAt;
+  bool _ownCleanupDeleteAllPending = false;
+  bool _suspendIncomingUntilCleanupResult = false;
+  int? _ignoreIncomingAtOrBeforeMs;
   bool _charLimitWarningVisible = false;
   int? _remoteOwnTypingLastActiveMs;
   int? _remoteOtherTypingLastActiveMs;
@@ -75,6 +80,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _loadInitialMessages();
     });
+    unawaited(_loadLastShownCleanupResultId());
   }
 
   @override
@@ -110,9 +116,13 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     }
 
     _initialMessagesLoaded = true;
-    final messages = await ref
+    final rawMessages = await ref
         .read(chatRepositoryProvider)
         .fetchMessagesPage(channelName: widget.session.channelName, limit: 30);
+    final cutoff = _ignoreIncomingAtOrBeforeMs;
+    final messages = cutoff == null
+        ? rawMessages
+        : rawMessages.where((message) => message.timestamp > cutoff).toList();
     if (!context.mounted) {
       return;
     }
@@ -131,6 +141,38 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     });
   }
 
+  Future<void> _resetMessageViewAndReload({
+    int? ignoreIncomingAtOrBeforeMs,
+  }) async {
+    _ignoreIncomingAtOrBeforeMs = ignoreIncomingAtOrBeforeMs;
+    _suspendIncomingUntilCleanupResult = false;
+    if (!mounted) {
+      return;
+    }
+    setState(() {
+      _replaceMessages(const <MessageModel>[]);
+    });
+    _initialMessagesLoaded = false;
+    await _loadInitialMessages();
+  }
+
+  Future<void> _loadLastShownCleanupResultId() async {
+    final requestId = await SessionStorage.readLastShownCleanupResultId(
+      channelName: widget.session.channelName,
+      sessionId: widget.session.sessionId,
+    );
+    _lastShownCleanupResultId = requestId;
+  }
+
+  Future<void> _markCleanupResultAsShown(String requestId) async {
+    _lastShownCleanupResultId = requestId;
+    await SessionStorage.saveLastShownCleanupResultId(
+      channelName: widget.session.channelName,
+      sessionId: widget.session.sessionId,
+      requestId: requestId,
+    );
+  }
+
   void _replaceMessages(List<MessageModel> messages) {
     _messageItems.clear();
     _messageIds.clear();
@@ -147,6 +189,32 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
 
   void _mergeIncomingMessages(List<MessageModel> incomingMessages) {
     var changed = false;
+
+    final incomingIds = <String>{};
+    for (final message in incomingMessages) {
+      final messageId = message.id;
+      if (messageId != null) {
+        incomingIds.add(messageId);
+      }
+    }
+
+    // Stream en son 30 mesaji otoriter verir; bu pencerede olup artik gelmeyen
+    // mesajlar silinmis/pencereden dusmus kabul edilip local listeden temizlenir.
+    final minIncomingTimestamp = incomingMessages.first.timestamp;
+    _messageItems.removeWhere((item) {
+      final itemId = item.id;
+      if (item.timestamp < minIncomingTimestamp || itemId == null) {
+        return false;
+      }
+      if (incomingIds.contains(itemId)) {
+        return false;
+      }
+      _messageIds.remove(itemId);
+      _messageBubbleKeys.remove(itemId);
+      changed = true;
+      return true;
+    });
+
     for (final message in incomingMessages) {
       final messageId = message.id;
       if (messageId != null && _messageIds.contains(messageId)) {
@@ -992,20 +1060,15 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     ref.listen<AsyncValue<List<MessageModel>>>(
       chatMessagesProvider(widget.session),
       (previous, next) {
-        final incoming = next.value;
-        if (incoming != null && _replaceFromNextIncoming) {
-          _replaceFromNextIncoming = false;
-          setState(() {
-            _replaceMessages(incoming);
-          });
-          if (incoming.isNotEmpty) {
-            unawaited(_acknowledgeIncomingMessages(incoming, markRead: false));
-            if (_isScreenActive) {
-              unawaited(_acknowledgeIncomingMessages(incoming, markRead: true));
-            }
-          }
+        if (_suspendIncomingUntilCleanupResult) {
           return;
         }
+
+        final rawIncoming = next.value;
+        final cutoff = _ignoreIncomingAtOrBeforeMs;
+        final incoming = rawIncoming == null || cutoff == null
+            ? rawIncoming
+            : rawIncoming.where((message) => message.timestamp > cutoff).toList();
 
         if (incoming != null && incoming.isNotEmpty) {
           _mergeIncomingMessages(incoming);
@@ -1032,6 +1095,13 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
       }
 
       if (request.requesterSlotId == widget.session.slotId) {
+        _ownCleanupRequestId = request.requestId;
+        _ownCleanupRequestedAt = request.requestedAt;
+        _ownCleanupDeleteAllPending =
+            !request.deleteWithinWindow && request.keepDuration == null;
+        if (_ownCleanupDeleteAllPending) {
+          _suspendIncomingUntilCleanupResult = true;
+        }
         return;
       }
 
@@ -1058,8 +1128,13 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
       if (_lastHandledCleanupResultId == result.requestId) {
         return;
       }
+      if (_lastShownCleanupResultId == result.requestId) {
+        return;
+      }
 
       _lastHandledCleanupResultId = result.requestId;
+      final messenger = ScaffoldMessenger.of(context);
+      await _markCleanupResultAsShown(result.requestId);
       if (!mounted) {
         return;
       }
@@ -1067,12 +1142,23 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
       final text = result.isApproved
           ? 'Silme onaylandı (${result.responderNick}) ve tamamlandı. ${result.deletedCount ?? 0} mesaj silindi.'
           : 'Silme talebi ${result.responderNick} tarafından reddedildi.';
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(text)));
+        messenger.showSnackBar(SnackBar(content: Text(text)));
 
       if (result.isApproved) {
-        _replaceFromNextIncoming = true;
-        _initialMessagesLoaded = false;
-        await _loadInitialMessages();
+        final isOwnDeleteAll =
+            _ownCleanupDeleteAllPending && _ownCleanupRequestId == result.requestId;
+        await _resetMessageViewAndReload(
+          ignoreIncomingAtOrBeforeMs: isOwnDeleteAll
+              ? _ownCleanupRequestedAt
+              : null,
+        );
+      }
+
+      if (_ownCleanupRequestId == result.requestId) {
+        _ownCleanupRequestId = null;
+        _ownCleanupRequestedAt = null;
+        _ownCleanupDeleteAllPending = false;
+        _suspendIncomingUntilCleanupResult = false;
       }
     });
 
