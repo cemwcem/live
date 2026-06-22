@@ -17,6 +17,8 @@ abstract class AuthRepository {
 }
 
 class FirebaseAuthRepository implements AuthRepository {
+  String _normalizeNick(String value) => value.trim().toLowerCase();
+
   @override
   Future<ChannelSession> joinChannel({
     required String channelName,
@@ -52,7 +54,7 @@ class FirebaseAuthRepository implements AuthRepository {
         'liveTyping/slot1': '',
         'liveTyping/slot2': '',
       });
-      _registerDisconnect(channelRef, 'slot1');
+      await _registerDisconnect(channelRef, 'slot1');
       return ChannelSession(
         channelName: channelName,
         nick: nick,
@@ -81,7 +83,7 @@ class FirebaseAuthRepository implements AuthRepository {
     );
     if (existingSlot != null) {
       await _occupySlot(channelRef, existingSlot, nick, sessionId, now);
-      _registerDisconnect(channelRef, existingSlot);
+      await _registerDisconnect(channelRef, existingSlot);
       return ChannelSession(
         channelName: channelName,
         nick: nick,
@@ -96,7 +98,7 @@ class FirebaseAuthRepository implements AuthRepository {
     }
 
     await _occupySlot(channelRef, targetSlot, nick, sessionId, now);
-    _registerDisconnect(channelRef, targetSlot);
+    await _registerDisconnect(channelRef, targetSlot);
 
     return ChannelSession(
       channelName: channelName,
@@ -123,13 +125,14 @@ class FirebaseAuthRepository implements AuthRepository {
       throw StateError('Oturum bulunamadı');
     }
 
-    if (slot.sessionId != session.sessionId || slot.nick != session.nick) {
+    if (slot.sessionId != session.sessionId ||
+        _normalizeNick(slot.nick) != _normalizeNick(session.nick)) {
       throw StateError('Oturum eşleşmedi');
     }
 
     final now = DateTime.now().millisecondsSinceEpoch;
     await _occupySlot(channelRef, session.slotId, session.nick, session.sessionId, now);
-    _registerDisconnect(channelRef, session.slotId);
+    await _registerDisconnect(channelRef, session.slotId);
 
     return session;
   }
@@ -153,10 +156,14 @@ class FirebaseAuthRepository implements AuthRepository {
     required String nick,
     required String sessionId,
   }) {
-    if (slot1 != null && (slot1.nick == nick || slot1.sessionId == sessionId)) {
+    final normalizedNick = _normalizeNick(nick);
+
+    if (slot1 != null &&
+        _normalizeNick(slot1.nick) == normalizedNick) {
       return 'slot1';
     }
-    if (slot2 != null && (slot2.nick == nick || slot2.sessionId == sessionId)) {
+    if (slot2 != null &&
+        _normalizeNick(slot2.nick) == normalizedNick) {
       return 'slot2';
     }
     return null;
@@ -192,8 +199,11 @@ class FirebaseAuthRepository implements AuthRepository {
     });
   }
 
-  void _registerDisconnect(DatabaseReference channelRef, String slotId) {
-    channelRef.child('slots/$slotId').onDisconnect().update({
+  Future<void> _registerDisconnect(
+    DatabaseReference channelRef,
+    String slotId,
+  ) {
+    return channelRef.child('slots/$slotId').onDisconnect().update({
       'online': false,
       'lastSeen': ServerValue.timestamp,
     });

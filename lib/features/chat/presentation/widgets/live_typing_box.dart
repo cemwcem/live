@@ -22,6 +22,7 @@ class LiveTypingBox extends StatelessWidget {
     this.showHeader = true,
     this.sendInline = false,
     this.showInlineBadge = false,
+    this.submitOnEnter = false,
     this.containerColor,
     this.inputFillColor,
     this.inputBorderColor,
@@ -55,6 +56,7 @@ class LiveTypingBox extends StatelessWidget {
   final bool showHeader;
   final bool sendInline;
   final bool showInlineBadge;
+  final bool submitOnEnter;
   final Color? containerColor;
   final Color? inputFillColor;
   final Color? inputBorderColor;
@@ -120,6 +122,7 @@ class LiveTypingBox extends StatelessWidget {
       remoteCursorColor: remoteCursorColor,
       maxLength: maxLength,
       onMaxLengthReached: onMaxLengthReached,
+      submitOnEnter: submitOnEnter,
     );
 
     final trailingBadge = ConstrainedBox(
@@ -293,6 +296,7 @@ class _CursorNickTextField extends StatefulWidget {
     required this.remoteCursorColor,
     required this.maxLength,
     required this.onMaxLengthReached,
+    required this.submitOnEnter,
     this.textTransformer,
   });
 
@@ -313,6 +317,7 @@ class _CursorNickTextField extends StatefulWidget {
   final Color? remoteCursorColor;
   final int? maxLength;
   final VoidCallback? onMaxLengthReached;
+  final bool submitOnEnter;
   final String Function(String text)? textTransformer;
 
   @override
@@ -472,47 +477,74 @@ class _CursorNickTextFieldState extends State<_CursorNickTextField> {
         final ownTagTop = (caretOffset.dy - 10.0).clamp(2.0, 2000.0);
         final remoteTagTop = (remoteCaretOffset.dy - 10.0).clamp(2.0, 2000.0);
 
+        Widget textField = TextField(
+          controller: widget.controller,
+          focusNode: _focusNode,
+          enabled: widget.enabled,
+          readOnly: widget.readOnly,
+          minLines: widget.minLines,
+          maxLines: widget.maxLines,
+          maxLength: widget.maxLength,
+          maxLengthEnforcement: MaxLengthEnforcement.enforced,
+          keyboardType: TextInputType.multiline,
+          textInputAction: widget.submitOnEnter
+              ? TextInputAction.send
+              : TextInputAction.newline,
+          style: widget.style,
+          onChanged: (value) {
+            final transformed = widget.textTransformer?.call(value) ?? value;
+            if (transformed != value) {
+              widget.controller.value = TextEditingValue(
+                text: transformed,
+                selection: TextSelection.collapsed(
+                  offset: transformed.length,
+                ),
+              );
+            }
+            final maxLength = widget.maxLength;
+            if (maxLength != null && transformed.length >= maxLength) {
+              widget.onMaxLengthReached?.call();
+            }
+            widget.onChanged(transformed);
+          },
+          decoration: widget.decoration.copyWith(counterText: ''),
+          buildCounter: (
+            context, {
+            required int currentLength,
+            required bool isFocused,
+            required int? maxLength,
+          }) {
+            return null;
+          },
+          onSubmitted: widget.onSubmitted,
+        );
+
+        if (widget.submitOnEnter) {
+          textField = Focus(
+            onKeyEvent: (node, event) {
+              if (event is! KeyDownEvent) {
+                return KeyEventResult.ignored;
+              }
+              if (event.logicalKey != LogicalKeyboardKey.enter) {
+                return KeyEventResult.ignored;
+              }
+              if (HardwareKeyboard.instance.isShiftPressed ||
+                  HardwareKeyboard.instance.isControlPressed ||
+                  HardwareKeyboard.instance.isAltPressed ||
+                  HardwareKeyboard.instance.isMetaPressed) {
+                return KeyEventResult.ignored;
+              }
+              widget.onSubmitted?.call(widget.controller.text);
+              return KeyEventResult.handled;
+            },
+            child: textField,
+          );
+        }
+
         return Stack(
           clipBehavior: Clip.none,
           children: [
-            TextField(
-              controller: widget.controller,
-              focusNode: _focusNode,
-              enabled: widget.enabled,
-              readOnly: widget.readOnly,
-              minLines: widget.minLines,
-              maxLines: widget.maxLines,
-              maxLength: widget.maxLength,
-              maxLengthEnforcement: MaxLengthEnforcement.enforced,
-              style: widget.style,
-              onChanged: (value) {
-                final transformed =
-                    widget.textTransformer?.call(value) ?? value;
-                if (transformed != value) {
-                  widget.controller.value = TextEditingValue(
-                    text: transformed,
-                    selection: TextSelection.collapsed(
-                      offset: transformed.length,
-                    ),
-                  );
-                }
-                final maxLength = widget.maxLength;
-                if (maxLength != null && transformed.length >= maxLength) {
-                  widget.onMaxLengthReached?.call();
-                }
-                widget.onChanged(transformed);
-              },
-              decoration: widget.decoration.copyWith(counterText: ''),
-              buildCounter: (
-                context, {
-                required int currentLength,
-                required bool isFocused,
-                required int? maxLength,
-              }) {
-                return null;
-              },
-              onSubmitted: widget.onSubmitted,
-            ),
+            textField,
             if (showTag)
               Positioned(
                 left: (caretOffset.dx + 11).clamp(

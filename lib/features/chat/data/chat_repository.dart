@@ -38,7 +38,7 @@ abstract class ChatRepository {
     required String requesterSlotId,
     required String requesterNick,
     Duration? keepDuration,
-    bool deleteWithinWindow,
+    bool deleteWithinWindow = false,
   });
   Stream<MessageCleanupResultModel?> watchMessageCleanupResult({
     required String channelName,
@@ -85,12 +85,14 @@ abstract class ChatRepository {
     required String channelName,
     required String slotId,
     required String text,
+    bool touchPresence,
   });
   Future<void> updateCursor({
     required String channelName,
     required String slotId,
     required String nick,
     required int offset,
+    bool touchPresence,
   });
   Future<void> setOnline({
     required String channelName,
@@ -354,7 +356,7 @@ class FirebaseChatRepository implements ChatRepository {
       requesterSlotId: requesterSlotId,
       requesterNick: requesterNick,
       requestedAt: DateTime.now().millisecondsSinceEpoch,
-      keepDurationMs: keepDuration?.inMilliseconds,
+      keepDurationMs: keepDuration?.inMilliseconds ?? 0,
       cleanupMode: deleteWithinWindow
           ? MessageCleanupRequestModel.modeDeleteWithin
           : MessageCleanupRequestModel.modeDeleteOlderThan,
@@ -590,13 +592,16 @@ class FirebaseChatRepository implements ChatRepository {
     required String channelName,
     required String slotId,
     required String text,
+    bool touchPresence = true,
   }) async {
     final ref = _channelReference(channelName);
     if (ref == null) {
       return;
     }
     await ref.child('liveTyping/$slotId').set(text);
-    await _touchPresence(ref: ref, slotId: slotId);
+    if (touchPresence) {
+      await _touchPresence(ref: ref, slotId: slotId);
+    }
   }
 
   @override
@@ -605,6 +610,7 @@ class FirebaseChatRepository implements ChatRepository {
     required String slotId,
     required String nick,
     required int offset,
+    bool touchPresence = true,
   }) async {
     final ref = _channelReference(channelName);
     if (ref == null) {
@@ -616,7 +622,9 @@ class FirebaseChatRepository implements ChatRepository {
       'offset': offset,
       'updatedAt': DateTime.now().millisecondsSinceEpoch,
     });
-    await _touchPresence(ref: ref, slotId: slotId);
+    if (touchPresence) {
+      await _touchPresence(ref: ref, slotId: slotId);
+    }
   }
 
   @override

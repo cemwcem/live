@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -46,6 +47,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
   int? _oldestTimestamp;
   String? _activeCleanupRequestDialogId;
   String? _lastHandledCleanupResultId;
+  bool _replaceFromNextIncoming = false;
   bool _charLimitWarningVisible = false;
   int? _remoteOwnTypingLastActiveMs;
   int? _remoteOtherTypingLastActiveMs;
@@ -66,6 +68,9 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
             channelName: widget.session.channelName,
             slotId: widget.session.slotId,
           );
+      if (mounted) {
+        setState(() {});
+      }
     });
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _loadInitialMessages();
@@ -306,12 +311,37 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     return '$hour:$minute';
   }
 
+  String _formatCompactDateTime(DateTime date) {
+    const shortMonthNames = <int, String>{
+      1: 'Oca',
+      2: 'Sub',
+      3: 'Mar',
+      4: 'Nis',
+      5: 'May',
+      6: 'Haz',
+      7: 'Tem',
+      8: 'Agu',
+      9: 'Eyl',
+      10: 'Eki',
+      11: 'Kas',
+      12: 'Ara',
+    };
+
+    final day = date.day.toString().padLeft(2, '0');
+    final month = shortMonthNames[date.month] ?? '';
+    return '$day $month ${_formatTime24(date)}';
+  }
+
   String _formatLastSeenText(int? millis) {
     if (millis == null || millis <= 0) {
       return 'Son aktif: bilinmiyor';
     }
     final date = DateTime.fromMillisecondsSinceEpoch(millis);
-    return 'Son aktif: ${_formatDayHeader(date)} ${_formatTime24(date)}';
+    final now = DateTime.now();
+    if (_isSameDay(date, now)) {
+      return 'Son aktif: ${_formatTime24(date)}';
+    }
+    return 'Son aktif: ${_formatCompactDateTime(date)}';
   }
 
   void _showMessageLimitWarning() {
@@ -535,27 +565,6 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     }
   }
 
-  bool _canPlaceMetaInline({
-    required String text,
-    required TextStyle textStyle,
-    required double maxWidth,
-    required double trailingMetaWidth,
-  }) {
-    final painter = TextPainter(
-      text: TextSpan(text: text, style: textStyle),
-      textDirection: TextDirection.ltr,
-      maxLines: null,
-    )..layout(maxWidth: maxWidth);
-
-    final lines = painter.computeLineMetrics();
-    if (lines.isEmpty) {
-      return true;
-    }
-
-    final lastLineWidth = lines.last.width;
-    return maxWidth - lastLineWidth >= trailingMetaWidth;
-  }
-
   Widget _buildMessageMetaSlot({
     required bool isMine,
     required bool showHoverMenuButton,
@@ -650,13 +659,10 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     required int? lastSeen,
     required int nowMillis,
   }) {
-    if (online == true) {
-      return true;
+    if (lastSeen != null && lastSeen > 0) {
+      return nowMillis - lastSeen <= 45000;
     }
-    if (lastSeen == null || lastSeen <= 0) {
-      return false;
-    }
-    return nowMillis - lastSeen <= 45000;
+    return online == true;
   }
 
   void _scheduleTypingUpdate({
@@ -675,6 +681,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
             channelName: widget.session.channelName,
             slotId: targetSlotId,
             text: text,
+            touchPresence: targetSlotId == widget.session.slotId,
           );
     });
 
@@ -703,6 +710,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
             slotId: targetSlotId,
             nick: nick,
             offset: offset,
+            touchPresence: targetSlotId == widget.session.slotId,
           );
     });
 
@@ -985,12 +993,30 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
       chatMessagesProvider(widget.session),
       (previous, next) {
         final incoming = next.value;
+        if (incoming != null && _replaceFromNextIncoming) {
+          _replaceFromNextIncoming = false;
+          setState(() {
+            _replaceMessages(incoming);
+          });
+          if (incoming.isNotEmpty) {
+            unawaited(_acknowledgeIncomingMessages(incoming, markRead: false));
+            if (_isScreenActive) {
+              unawaited(_acknowledgeIncomingMessages(incoming, markRead: true));
+            }
+          }
+          return;
+        }
+
         if (incoming != null && incoming.isNotEmpty) {
           _mergeIncomingMessages(incoming);
           unawaited(_acknowledgeIncomingMessages(incoming, markRead: false));
           if (_isScreenActive) {
             unawaited(_acknowledgeIncomingMessages(incoming, markRead: true));
           }
+        } else if (incoming != null && incoming.isEmpty && _messageItems.isNotEmpty) {
+          setState(() {
+            _replaceMessages(const <MessageModel>[]);
+          });
         }
       },
     );
@@ -1044,6 +1070,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(text)));
 
       if (result.isApproved) {
+        _replaceFromNextIncoming = true;
         _initialMessagesLoaded = false;
         await _loadInitialMessages();
       }
@@ -1103,7 +1130,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
                 statusText,
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
-                textAlign: TextAlign.right,
+                textAlign: TextAlign.left,
                 style: Theme.of(context).textTheme.bodySmall?.copyWith(
                   fontSize: 12,
                 ),
@@ -1264,11 +1291,11 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
                 final replyTextRaw = message.replyToText;
                 final replyNickRaw = message.replyToSenderNick;
                 final hasReply =
-                  (replyTextRaw?.isNotEmpty ?? false) &&
-                  (replyNickRaw?.isNotEmpty ?? false);
+                    (replyTextRaw?.isNotEmpty ?? false) &&
+                    (replyNickRaw?.isNotEmpty ?? false);
                 final replyText = hasReply
-                  ? _replyPreviewText(EmojiShortcodes.emojify(replyTextRaw!))
-                  : null;
+                    ? _replyPreviewText(EmojiShortcodes.emojify(replyTextRaw!))
+                    : null;
                 final showHoverMenuButton = message.id != null &&
                     (_hoveredMessageId == message.id ||
                         _menuOpenMessageId == message.id);
@@ -1458,9 +1485,6 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
                                             ],
                                           );
 
-                                          // Metnin sonuna görünmez placeholder ekleyerek
-                                          // meta için yer ayrılır; meta Stack ile
-                                          // her zaman sağ-alt köşeye sabitlenir.
                                           return Stack(
                                             children: [
                                               Text.rich(
@@ -1470,8 +1494,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
                                                     TextSpan(text: messageText),
                                                     const WidgetSpan(
                                                       alignment:
-                                                          PlaceholderAlignment
-                                                              .middle,
+                                                          PlaceholderAlignment.middle,
                                                       child: SizedBox(
                                                         width: 72,
                                                         height: 20,
@@ -1493,18 +1516,6 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
                                   ),
                                 ),
                               ),
-                            ),
-                          ),
-                          ConstrainedBox(
-                            constraints: const BoxConstraints(maxWidth: 90),
-                            child: Text(
-                              message.senderNick,
-                              overflow: TextOverflow.ellipsis,
-                              style: Theme.of(context).textTheme.bodySmall
-                                  ?.copyWith(
-                                    fontWeight: FontWeight.w700,
-                                    color: Colors.black54,
-                                  ),
                             ),
                           ),
                         ],
@@ -1562,6 +1573,10 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
               _clearReplyTarget();
             },
             sendEnabled: true,
+            submitOnEnter: kIsWeb &&
+                (defaultTargetPlatform == TargetPlatform.macOS ||
+                    defaultTargetPlatform == TargetPlatform.windows ||
+                    defaultTargetPlatform == TargetPlatform.linux),
             showHeader: false,
             sendInline: true,
             maxLength: _maxMessageChars,

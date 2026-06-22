@@ -127,11 +127,13 @@ class ChatService {
     required String channelName,
     required String slotId,
     required String text,
+    bool touchPresence = true,
   }) {
     return _repository.updateTyping(
       channelName: channelName,
       slotId: slotId,
       text: text,
+      touchPresence: touchPresence,
     );
   }
 
@@ -140,12 +142,14 @@ class ChatService {
     required String slotId,
     required String nick,
     required int offset,
+    bool touchPresence = true,
   }) {
     return _repository.updateCursor(
       channelName: channelName,
       slotId: slotId,
       nick: nick,
       offset: offset,
+      touchPresence: touchPresence,
     );
   }
 
