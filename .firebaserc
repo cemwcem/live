@@ -1,6 +1,7 @@
 {
   "projects": {
-    "live": "live-a42e1"
+    "live": "live-a42e1",
+    "default": "live-a42e1"
   },
   "targets": {},
   "etags": {}

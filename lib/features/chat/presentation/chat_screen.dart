@@ -397,7 +397,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
 
     final day = date.day.toString().padLeft(2, '0');
     final month = shortMonthNames[date.month] ?? '';
-    return '$day $month ${_formatTime24(date)}';
+    return '$month $day  ${_formatTime24(date)}';
   }
 
   String _formatLastSeenText(int? millis) {

@@ -537,6 +537,14 @@ class FirebaseChatRepository implements ChatRepository {
       throw StateError('Firebase is not configured yet.');
     }
 
+    // lastMessageSentAt: sadece mesaj gönderilince güncellenen field.
+    // lastSeen kullanılamaz — heartbeat ve her tuş basımı lastSeen'i günceller,
+    // bu yüzden aktif kullanıcı için elapsed her zaman ~0 çıkar.
+    // Mesaj payload'ına eklenmesi race condition'ı da ortadan kaldırır.
+    final lastMsgSnap =
+        await ref.child('slots/$slotId/lastMessageSentAt').get();
+    final senderLastSeen = (lastMsgSnap.value as num?)?.toInt() ?? 0;
+
     final messageRef = ref.child('messages').push();
     final now = DateTime.now().millisecondsSinceEpoch;
     await messageRef.set({
@@ -544,6 +552,7 @@ class FirebaseChatRepository implements ChatRepository {
       'senderSlotId': slotId,
       'text': text,
       'timestamp': now,
+      'senderLastSeen': senderLastSeen,
       'deliveredSlots': {slotId: true},
       'readSlots': {slotId: true},
       ...?replyToMessageId == null
@@ -554,6 +563,9 @@ class FirebaseChatRepository implements ChatRepository {
           : {'replyToSenderNick': replyToSenderNick},
       ...?replyToText == null ? null : {'replyToText': replyToText},
     });
+    // lastMessageSentAt mesaj yazıldıktan sonra güncellenir.
+    // CF değeri zaten message.senderLastSeen'den okuduğu için sırası önemli değil.
+    await ref.child('slots/$slotId/lastMessageSentAt').set(now);
     await ref.child('liveTyping/$slotId').set('');
     await _touchPresence(ref: ref, slotId: slotId);
   }
