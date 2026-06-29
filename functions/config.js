@@ -49,8 +49,8 @@ const CHANNELS = {
   },
   kanal2: {
     type: "real",
-    nick1: {name: "ahmet", email: "NICK1_KANAL2_EMAIL@example.com"},
-    nick2: {name: "mehmet", email: "NICK2_KANAL2_EMAIL@example.com"},
+    nick1: {name: "ahmet", email: "denememavis@gmail.com"},
+    nick2: {name: "mehmet", email: "denememavis@gmail.com"},
   },
 
   // --- Test kanalları ---

@@ -40,22 +40,22 @@ function buildEmailContent({eventType, channelId, senderNick, messageText}) {
   switch (eventType) {
     case EVENT_TYPES.REAL_NOTIFY_NICK1:
       return {
-        subject: `${senderNick} sana mesaj yazdı`,
-        text: `${senderNick}:\n\n${messageText}`,
-        html: `<p><b>${senderNick}:</b></p><p>${messageText}</p>`,
+        subject: `${channelId} kanalında ${senderNick} sana mesaj yazdı`,
+        text: `kanal: ${channelId}\n${senderNick}:\n\n${messageText}`,
+        html: `<p><b>${channelId}</b> kanalında <b>${senderNick}:</b></p><p>${messageText}</p>`,
       };
 
     case EVENT_TYPES.REAL_NOTIFY_NICK2:
       return {
-        subject: `${senderNick} sana mesaj yazdı`,
-        text: `${senderNick}:\n\n${messageText}`,
-        html: `<p><b>${senderNick}:</b></p><p>${messageText}</p>`,
+        subject: `${channelId} kanalında ${senderNick} sana mesaj yazdı`,
+        text: `kanal: ${channelId}\n${senderNick}:\n\n${messageText}`,
+        html: `<p><b>${channelId}</b> kanalında <b>${senderNick}:</b></p><p>${messageText}</p>`,
       };
 
     case EVENT_TYPES.TEST_NOTIFY_NICK1:
       return {
-        subject: `[TEST] ${channelId} — ${senderNick} mesaj yazdı`,
-        text: `${channelId} kanalında ${senderNick}:\n\n${messageText}`,
+        subject: `[TEST] ${channelId} kanalında ${senderNick} mesaj yazdı`,
+        text: `kanal: ${channelId}\n${senderNick}:\n\n${messageText}`,
         html: `<p><b>${channelId}</b> kanalında <b>${senderNick}:</b></p><p>${messageText}</p>`,
       };
 
