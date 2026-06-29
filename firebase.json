@@ -3,6 +3,10 @@
     "rules": "database.rules.json"
   },
   "hosting": {
+    "predeploy": [
+      "dart run scripts/generate_release.dart",
+      "flutter build web --release"
+    ],
     "public": "build/web",
     "ignore": [
       "firebase.json",
