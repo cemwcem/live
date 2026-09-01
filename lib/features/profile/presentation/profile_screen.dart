@@ -30,9 +30,9 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
     return RegExp(r'^[^\s@]+@gmail\.com$').hasMatch(normalized);
   }
 
-  Future<void> _saveEmail() async {
-    final value = _emailController.text.trim();
-    if (!_isValidGmail(value)) {
+  Future<void> _saveEmail({String? overrideValue}) async {
+    final value = overrideValue ?? _emailController.text.trim();
+    if (value.isNotEmpty && !_isValidGmail(value)) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           content: Text('Lütfen geçerli bir gmail adresi girin (örn: ad@gmail.com).'),
@@ -53,7 +53,11 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
       _editedByUser = false;
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Bildirim adresi kaydedildi.')),
+          SnackBar(
+            content: Text(
+              value.isEmpty ? 'Bildirim adresi kaldırıldı.' : 'Bildirim adresi kaydedildi.',
+            ),
+          ),
         );
       }
     } catch (_) {
@@ -172,9 +176,24 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
                   const SizedBox(height: 12),
                   Align(
                     alignment: Alignment.centerRight,
-                    child: FilledButton(
-                      onPressed: _isSaving ? null : _saveEmail,
-                      child: Text(_isSaving ? 'Kaydediliyor...' : 'Kaydet'),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        if (savedEmail != null && savedEmail.isNotEmpty)
+                          Padding(
+                            padding: const EdgeInsets.only(right: 8),
+                            child: TextButton(
+                              onPressed: _isSaving
+                                  ? null
+                                  : () => _saveEmail(overrideValue: ''),
+                              child: const Text('Kaldır'),
+                            ),
+                          ),
+                        FilledButton(
+                          onPressed: _isSaving ? null : () => _saveEmail(),
+                          child: Text(_isSaving ? 'Kaydediliyor...' : 'Kaydet'),
+                        ),
+                      ],
                     ),
                   ),
                 ],

@@ -8,12 +8,17 @@
  * Akış:
  *   1. Yeni mesaj oluşturulduğunda tetiklenir.
  *   2. Duplicate kontrolü yapılır (aynı mesaj için tekrar çalışmaz).
- *   3. Kanal konfigürasyonu okunur; tanımlı değilse çıkılır.
- *   4. Gönderenin hangi rol (nick1/nick2) olduğu tespit edilir.
- *   5. Gönderenin lastSeen değeri Firebase'den okunur.
- *   6. Geçen süre eşik ile karşılaştırılır.
- *   7. Eşik aşıldıysa NotificationService aracılığıyla email gönderilir.
- *   8. Başarılı gönderim sonrası mesaja notifiedAt damgası yazılır.
+ *   3. Gönderenin slotId'sinden karşı taraf (alıcı) slotId'si belirlenir.
+ *   4. Gönderenin son mesajından bu yana geçen süre eşik ile karşılaştırılır.
+ *   5. Eşik aşıldıysa alıcının Profil'de kaydettiği bildirim email adresi okunur.
+ *   6. Alıcı bir email tanımlamışsa NotificationService ile email gönderilir.
+ *   7. Başarılı gönderim sonrası mesaja notifiedAt damgası yazılır.
+ *
+ * NOT: Kanal adı serbest metin (Flutter tarafında Giriş ekranında kullanıcı
+ * istediği kanalı yazabiliyor), bu yüzden burada sabit bir kanal whitelist'i
+ * YOKTUR — her kanal aynı mantıkla işlenir. Kanal tipi (real/test) sadece
+ * eşik süresini ve email içeriğini etkiler, resolveChannelType() ile kanal
+ * adından türetilir.
  */
 
 const {setGlobalOptions} = require("firebase-functions");
@@ -21,7 +26,7 @@ const {onValueCreated} = require("firebase-functions/v2/database");
 const {logger} = require("firebase-functions");
 const admin = require("firebase-admin");
 
-const {CHANNELS, THRESHOLDS, EVENT_TYPES} = require("./config");
+const {THRESHOLDS} = require("./config");
 const {sendNotificationEmail} = require("./notificationService");
 
 admin.initializeApp();
@@ -31,33 +36,16 @@ admin.initializeApp();
 setGlobalOptions({maxInstances: 10});
 
 // ---------------------------------------------------------------------------
-// Gönderenin kanal konfigürasyonundaki rolünü döndürür.
-// "nick1" veya "nick2" — tanımlı değilse null.
+// Kanal tipini kanal adından türetir ("real" | "test").
+// Adı "deneme" veya "test" ile başlayan kanallar test kanalı sayılır
+// (kısa eşik süresi, [TEST] ön ekli email); diğer tüm kanallar real'dir.
 // ---------------------------------------------------------------------------
-function getSenderRole(senderNick, channelConfig) {
-  if (senderNick === channelConfig.nick1.name) return "nick1";
-  if (senderNick === channelConfig.nick2.name) return "nick2";
-  return null;
-}
-
-// ---------------------------------------------------------------------------
-// Event tipini gönderen rolüne ve kanal tipine göre belirler.
-// ---------------------------------------------------------------------------
-function resolveEventType(senderRole, channelType) {
-  if (channelType === "real") {
-    // nick1 yazdı → nick2 bilgilendirilir (REAL_NOTIFY_NICK2)
-    // nick2 yazdı → nick1 bilgilendirilir (REAL_NOTIFY_NICK1)
-    return senderRole === "nick1" ?
-      EVENT_TYPES.REAL_NOTIFY_NICK2 :
-      EVENT_TYPES.REAL_NOTIFY_NICK1;
+function resolveChannelType(channelId) {
+  const normalized = (channelId || "").toLowerCase();
+  if (normalized.startsWith("deneme") || normalized.startsWith("test")) {
+    return "test";
   }
-
-  if (channelType === "test") {
-    // Her iki kullanıcı da aynı event tipini tetikler
-    return EVENT_TYPES.TEST_NOTIFY_NICK1;
-  }
-
-  return null;
+  return "real";
 }
 
 // ---------------------------------------------------------------------------
@@ -90,21 +78,14 @@ exports.onNewMessage = onValueCreated(
       // Mesaj timestamp'i lastSeen farkı hesabında referans olarak kullanılır.
       const messageTimestamp = message.timestamp || Date.now();
 
-      // --- Kanal konfigürasyonu ---
-      const channelConfig = CHANNELS[channelId];
-      if (!channelConfig) {
-        logger.info(`[${channelId}] Bildirim konfigürasyonunda tanımlı değil, atlanıyor.`);
+      // --- Gönderen/alıcı slot'ları ---
+      // Her kanalda tam olarak iki katılımcı slotu vardır: slot1 ve slot2.
+      const senderSlotId = message.senderSlotId;
+      if (senderSlotId !== "slot1" && senderSlotId !== "slot2") {
+        logger.warn(`[${channelId}] Mesajda geçerli bir senderSlotId yok, atlanıyor.`);
         return null;
       }
-
-      // --- Gönderen rolü ---
-      const senderRole = getSenderRole(senderNick, channelConfig);
-      if (!senderRole) {
-        logger.info(
-            `[${channelId}] Gönderen "${senderNick}" bu kanalda tanımlı değil, atlanıyor.`,
-        );
-        return null;
-      }
+      const recipientSlotId = senderSlotId === "slot1" ? "slot2" : "slot1";
 
       // --- lastSeen okuma ---
       // Flutter, sendMessage() içinde lastSeen'i mesaj yazılmadan ÖNCE okur
@@ -115,7 +96,8 @@ exports.onNewMessage = onValueCreated(
       const lastSeen = message.senderLastSeen || 0;
 
       // --- Eşik süre kontrolü ---
-      const threshold = THRESHOLDS[channelConfig.type];
+      const channelType = resolveChannelType(channelId);
+      const threshold = THRESHOLDS[channelType];
       const elapsed = messageTimestamp - lastSeen;
 
       if (lastSeen > 0 && elapsed <= threshold) {
@@ -126,43 +108,36 @@ exports.onNewMessage = onValueCreated(
         return null;
       }
 
-      // --- Event tipi ---
-      const eventType = resolveEventType(senderRole, channelConfig.type);
-      if (!eventType) {
-        logger.warn(`[${channelId}] Event tipi belirlenemedi (type: ${channelConfig.type}).`);
+      // --- Alıcının Profil ekranından kaydettiği bildirim email'i ---
+      // Kullanıcı Profil > Bildirim altında kendi gmail adresini girip
+      // /channels/{channelId}/slots/{slotId}/notificationEmail alanına yazıyor.
+      // Alıcı bunu hiç ayarlamamışsa gönderilecek bir adres yoktur, atlanır.
+      const recipientEmailSnap = await admin
+          .database()
+          .ref(`/channels/${channelId}/slots/${recipientSlotId}/notificationEmail`)
+          .get();
+      const recipientEmail = recipientEmailSnap.exists() ? recipientEmailSnap.val() : null;
+
+      if (!recipientEmail) {
+        logger.info(
+            `[${channelId}] Alıcının (${recipientSlotId}) bildirim email adresi tanımlı değil, ` +
+        `atlanıyor.`,
+        );
         return null;
       }
 
       logger.info(
-          `[${channelId}/${senderNick}] Bildirim tetiklendi → event: ${eventType}, ` +
-      `geçen süre: ${Math.round(elapsed / 1000)}s`,
+          `[${channelId}/${senderNick}] Bildirim tetiklendi → tip: ${channelType}, ` +
+      `geçen süre: ${Math.round(elapsed / 1000)}s, alıcı: ${recipientEmail}`,
       );
-
-      // --- Alıcının kendi Profil ekranından kaydettiği email (varsa) ---
-      // Kullanıcı Profil > Bildirim altında kendi gmail adresini girip
-      // /channels/{channelId}/slots/{slotId}/notificationEmail alanına yazıyor.
-      // Bu adres, config.js'deki statik email'in yerine geçer (öncelikli);
-      // hiç girilmemişse mevcut statik davranış (config.js) korunur.
-      const senderSlotId = message.senderSlotId;
-      const recipientSlotId = senderSlotId === "slot1" ? "slot2" : "slot1";
-      let recipientEmailOverride = null;
-      if (senderSlotId === "slot1" || senderSlotId === "slot2") {
-        const overrideSnap = await admin
-            .database()
-            .ref(`/channels/${channelId}/slots/${recipientSlotId}/notificationEmail`)
-            .get();
-        recipientEmailOverride = overrideSnap.exists() ? overrideSnap.val() : null;
-      }
 
       // --- Email gönder ---
       await sendNotificationEmail({
-        eventType,
         channelId,
-        senderRole,
+        channelType,
         senderNick,
         messageText,
-        channelConfig,
-        recipientEmailOverride,
+        recipientEmail,
       });
 
       // --- Duplicate önleme damgası ---

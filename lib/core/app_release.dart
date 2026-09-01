@@ -1,7 +1,7 @@
 class AppRelease {
   const AppRelease._();
 
-  static const String name = 'Reload';
-  static const String version = 'v1.0.3';
-  static const String deployedAt = '2026-09-01 13:14:59';
+  static const String name = 'Notification';
+  static const String version = 'v1.0.3a';
+  static const String deployedAt = '2026-09-02 01:48:03';
 }
