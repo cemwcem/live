@@ -70,8 +70,15 @@ function buildEmailContent({eventType, channelId, senderNick, messageText}) {
 
 // ---------------------------------------------------------------------------
 // Alıcı email adresini event tipine ve kanal konfigürasyonuna göre seçer.
+// recipientEmailOverride doluysa (kullanıcı Profil > Bildirim altında kendi
+// gmail adresini kaydetmişse) her zaman ona öncelik verilir; boşsa config.js
+// içindeki statik adrese (mevcut davranış) geri düşülür.
 // ---------------------------------------------------------------------------
-function resolveRecipientEmail({eventType, channelConfig, senderRole}) {
+function resolveRecipientEmail({eventType, channelConfig, senderRole, recipientEmailOverride}) {
+  if (recipientEmailOverride) {
+    return recipientEmailOverride;
+  }
+
   if (eventType === EVENT_TYPES.TEST_NOTIFY_NICK1) {
     // Test kanallarında da çapraz bildirim yapılır:
     // nick1 yazdı → nick2.email, nick2 yazdı → nick1.email
@@ -103,6 +110,9 @@ function resolveRecipientEmail({eventType, channelConfig, senderRole}) {
 //   senderNick    : Gönderenin gerçek nick adı (örn. "aziz")
 //   messageText   : Gönderilen mesajın metni
 //   channelConfig : config.js'deki kanal nesnesi
+//   recipientEmailOverride : alıcının Profil > Bildirim'de kaydettiği gmail
+//                            adresi (varsa); config.js'deki statik adrese göre
+//                            önceliklidir.
 // ---------------------------------------------------------------------------
 async function sendNotificationEmail({
   eventType,
@@ -111,11 +121,13 @@ async function sendNotificationEmail({
   senderNick,
   messageText,
   channelConfig,
+  recipientEmailOverride,
 }) {
   const recipientEmail = resolveRecipientEmail({
     eventType,
     channelConfig,
     senderRole,
+    recipientEmailOverride,
   });
 
   if (!recipientEmail) {

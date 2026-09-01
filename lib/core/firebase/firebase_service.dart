@@ -38,11 +38,19 @@ class FirebaseService {
     return app;
   }
 
-  static DatabaseReference? databaseRoot() {
+  static FirebaseDatabase? database() {
     if (!isInitialized) {
       return null;
     }
-    return FirebaseDatabase.instanceFor(app: app).ref();
+    return FirebaseDatabase.instanceFor(app: app);
+  }
+
+  static DatabaseReference? databaseRoot() {
+    final db = database();
+    if (db == null) {
+      return null;
+    }
+    return db.ref();
   }
 
   static DatabaseReference? channelReference(String channelName) {

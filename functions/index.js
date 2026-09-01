@@ -138,6 +138,22 @@ exports.onNewMessage = onValueCreated(
       `geçen süre: ${Math.round(elapsed / 1000)}s`,
       );
 
+      // --- Alıcının kendi Profil ekranından kaydettiği email (varsa) ---
+      // Kullanıcı Profil > Bildirim altında kendi gmail adresini girip
+      // /channels/{channelId}/slots/{slotId}/notificationEmail alanına yazıyor.
+      // Bu adres, config.js'deki statik email'in yerine geçer (öncelikli);
+      // hiç girilmemişse mevcut statik davranış (config.js) korunur.
+      const senderSlotId = message.senderSlotId;
+      const recipientSlotId = senderSlotId === "slot1" ? "slot2" : "slot1";
+      let recipientEmailOverride = null;
+      if (senderSlotId === "slot1" || senderSlotId === "slot2") {
+        const overrideSnap = await admin
+            .database()
+            .ref(`/channels/${channelId}/slots/${recipientSlotId}/notificationEmail`)
+            .get();
+        recipientEmailOverride = overrideSnap.exists() ? overrideSnap.val() : null;
+      }
+
       // --- Email gönder ---
       await sendNotificationEmail({
         eventType,
@@ -146,6 +162,7 @@ exports.onNewMessage = onValueCreated(
         senderNick,
         messageText,
         channelConfig,
+        recipientEmailOverride,
       });
 
       // --- Duplicate önleme damgası ---

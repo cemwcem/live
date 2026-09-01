@@ -100,6 +100,12 @@ abstract class ChatRepository {
     required bool online,
   });
   Future<void> heartbeat({required String channelName, required String slotId});
+  Future<void> reconnect();
+  Future<void> setNotificationEmail({
+    required String channelName,
+    required String slotId,
+    required String? email,
+  });
 }
 
 class FirebaseChatRepository implements ChatRepository {
@@ -680,5 +686,35 @@ class FirebaseChatRepository implements ChatRepository {
     return ref.child('slots/$slotId/online').onValue.map((event) {
       return event.snapshot.value as bool?;
     });
+  }
+
+  @override
+  Future<void> reconnect() async {
+    // Uygulama arka plandan dönünce websocket bağlantısı sessizce kopuk
+    // kalabiliyor (özellikle mobil web'de). goOffline+goOnline SDK'yı
+    // bağlantıyı sıfırdan kurmaya zorlayarak donuk kalan stream'leri
+    // (mesajlar, typing, cursor, online) tazeler.
+    final db = FirebaseService.database();
+    if (db == null) {
+      return;
+    }
+    db.goOffline();
+    db.goOnline();
+  }
+
+  @override
+  Future<void> setNotificationEmail({
+    required String channelName,
+    required String slotId,
+    required String? email,
+  }) async {
+    final ref = _channelReference(channelName);
+    if (ref == null) {
+      return;
+    }
+    final trimmed = email?.trim();
+    await ref
+        .child('slots/$slotId/notificationEmail')
+        .set(trimmed == null || trimmed.isEmpty ? null : trimmed);
   }
 }

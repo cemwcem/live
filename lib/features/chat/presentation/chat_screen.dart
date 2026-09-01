@@ -11,6 +11,7 @@ import '../../../core/utils/emoji_shortcodes.dart';
 import '../../../core/utils/session_storage.dart';
 import '../../auth/domain/auth_service.dart';
 import '../../auth/presentation/login_screen.dart';
+import '../../profile/presentation/profile_screen.dart';
 import 'emoji_help_screen.dart';
 import 'message_cleanup_screen.dart';
 import 'chat_provider.dart';
@@ -60,6 +61,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
   String? _hoveredMessageId;
   String? _menuOpenMessageId;
   bool _jumpToReplyInProgress = false;
+  bool _isSendingMessage = false;
 
   @override
   void initState() {
@@ -106,6 +108,65 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
 
     _isScreenActive = isActive;
     if (isActive) {
+      unawaited(_handleAppResumed());
+    }
+  }
+
+  Future<void> _handleAppResumed() async {
+    // Mobil web'de arka plana alınan sekmenin Firebase websocket bağlantısı
+    // sessizce kopuk kalabiliyor; goOffline+goOnline ile bağlantıyı
+    // tazeleyip mevcut lazy-loading fonksiyonuyla son mesaj penceresini
+    // yeniden çekiyoruz (kullanıcı manuel sayfa yenilemek zorunda kalmasın).
+    await ref.read(chatServiceProvider).reconnect();
+
+    if (!mounted) {
+      return;
+    }
+
+    // Kopukluk sırasında henüz Firebase'e ulaşmamış olabilecek taslak
+    // metni tekrar yazıyoruz; aksi halde bağlantı geri gelince stream'den
+    // gelecek eski (stale) değer, kullanıcının yazdığı taslağı silebilir.
+    final draftText = _composerController.text;
+    if (draftText.isNotEmpty) {
+      unawaited(
+        ref
+            .read(chatServiceProvider)
+            .updateTyping(
+              channelName: widget.session.channelName,
+              slotId: widget.session.slotId,
+              text: draftText,
+              touchPresence: true,
+            ),
+      );
+    }
+
+    if (_suspendIncomingUntilCleanupResult) {
+      unawaited(_acknowledgeIncomingMessages(_messageItems, markRead: true));
+      return;
+    }
+
+    final rawMessages = await ref
+        .read(chatRepositoryProvider)
+        .fetchMessagesPage(channelName: widget.session.channelName, limit: 30);
+    if (!mounted) {
+      return;
+    }
+
+    final cutoff = _ignoreIncomingAtOrBeforeMs;
+    final latestMessages = cutoff == null
+        ? rawMessages
+        : rawMessages.where((message) => message.timestamp > cutoff).toList();
+
+    if (latestMessages.isNotEmpty) {
+      _mergeIncomingMessages(latestMessages);
+      unawaited(_acknowledgeIncomingMessages(latestMessages, markRead: false));
+      unawaited(_acknowledgeIncomingMessages(latestMessages, markRead: true));
+    } else {
+      if (_messageItems.isNotEmpty) {
+        setState(() {
+          _replaceMessages(const <MessageModel>[]);
+        });
+      }
       unawaited(_acknowledgeIncomingMessages(_messageItems, markRead: true));
     }
   }
@@ -1277,9 +1338,16 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
                 }
               } else if (value == 'about' && context.mounted) {
                 await _showAboutDialog();
+              } else if (value == 'profile' && context.mounted) {
+                Navigator.of(context).push(
+                  MaterialPageRoute<void>(
+                    builder: (_) => ProfileScreen(session: widget.session),
+                  ),
+                );
               }
             },
             itemBuilder: (context) => [
+              const PopupMenuItem(value: 'profile', child: Text('Profil')),
               const PopupMenuItem(value: 'emojis', child: Text('Emojiler')),
               const PopupMenuItem(
                 value: 'cleanup',
@@ -1634,26 +1702,45 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
             },
             textTransformer: EmojiShortcodes.emojify,
             onSend: () async {
+              if (_isSendingMessage) {
+                return;
+              }
               final text = _composerController.text.trim();
               if (text.isEmpty) {
                 return;
               }
               final replyTarget = _replyTarget;
-              await ref
-                  .read(chatServiceProvider)
-                  .sendMessage(
-                    channelName: widget.session.channelName,
-                    slotId: widget.session.slotId,
-                    nick: widget.session.nick,
-                    text: text,
-                    replyToMessageId: replyTarget?.id,
-                    replyToSenderNick: replyTarget?.senderNick,
-                    replyToText: replyTarget == null
-                        ? null
-                        : _replyPreviewText(
-                            EmojiShortcodes.emojify(replyTarget.text),
-                          ),
+              _isSendingMessage = true;
+              try {
+                await ref
+                    .read(chatServiceProvider)
+                    .sendMessage(
+                      channelName: widget.session.channelName,
+                      slotId: widget.session.slotId,
+                      nick: widget.session.nick,
+                      text: text,
+                      replyToMessageId: replyTarget?.id,
+                      replyToSenderNick: replyTarget?.senderNick,
+                      replyToText: replyTarget == null
+                          ? null
+                          : _replyPreviewText(
+                              EmojiShortcodes.emojify(replyTarget.text),
+                            ),
+                    );
+              } catch (_) {
+                if (context.mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(
+                      content: Text(
+                        'Mesaj gönderilemedi, bağlantı kontrol edilip tekrar denenecek.',
+                      ),
+                    ),
                   );
+                }
+                return;
+              } finally {
+                _isSendingMessage = false;
+              }
               _composerController.clear();
               _charLimitWarningVisible = false;
               _clearReplyTarget();

@@ -31,14 +31,20 @@ const EVENT_TYPES = {
 //
 // Her kanalda:
 //   type    : "real" | "test"   → eşik süresini belirler
-//   nick1   : { name, email }   → slot1 kullanıcısı ve bildirim alacağı adres
-//   nick2   : { name, email }   → slot2 kullanıcısı ve bildirim alacağı adres
+//   nick1   : { name, email }   → slot1 kullanıcısı ve varsayılan bildirim adresi
+//   nick2   : { name, email }   → slot2 kullanıcısı ve varsayılan bildirim adresi
 //
 // Kural (her iki tip için çapraz bildirim geçerlidir):
 //   - nick1 yazarsa → nick2.email'e bildirim gönderilir
 //   - nick2 yazarsa → nick1.email'e bildirim gönderilir
 //   Fark: real → 10 dakika eşik + REAL_NOTIFY_* event
 //         test → 10 saniye eşik + TEST_NOTIFY_NICK1 event
+//
+// NOT: Buradaki nickX.email artık sadece VARSAYILAN/yedek adres. Kullanıcı
+// Flutter uygulamasında Profil > Bildirim altında kendi gmail adresini
+// girerse (/channels/{channelId}/slots/{slotId}/notificationEmail), bildirim
+// oraya gider; girilmemişse buradaki statik adres kullanılmaya devam eder.
+// Bkz. notificationService.js → resolveRecipientEmail.
 // ---------------------------------------------------------------------------
 const CHANNELS = {
   // --- Gerçek kanallar ---

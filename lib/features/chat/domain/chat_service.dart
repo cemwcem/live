@@ -172,6 +172,22 @@ class ChatService {
     return _repository.heartbeat(channelName: channelName, slotId: slotId);
   }
 
+  Future<void> reconnect() {
+    return _repository.reconnect();
+  }
+
+  Future<void> setNotificationEmail({
+    required String channelName,
+    required String slotId,
+    required String? email,
+  }) {
+    return _repository.setNotificationEmail(
+      channelName: channelName,
+      slotId: slotId,
+      email: email,
+    );
+  }
+
   Stream<String?> watchTyping({
     required String channelName,
     required String slotId,

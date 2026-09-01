@@ -140,4 +140,16 @@ class SessionStorage {
       _cleanupResultSeenKey(channelName: channelName, sessionId: sessionId),
     );
   }
+
+  static const _themeModeKey = 'theme_mode_is_dark';
+
+  static Future<void> saveIsDarkMode(bool isDark) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_themeModeKey, isDark);
+  }
+
+  static Future<bool> readIsDarkMode() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getBool(_themeModeKey) ?? false;
+  }
 }

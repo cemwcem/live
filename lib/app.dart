@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'core/firebase/firebase_service.dart';
+import 'core/theme/theme_provider.dart';
 import 'core/utils/session_storage.dart';
 import 'features/auth/domain/auth_service.dart';
 import 'features/auth/presentation/login_screen.dart';
@@ -33,6 +34,7 @@ class LiveChatApp extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final bootstrapState = ref.watch(firebaseBootstrapProvider);
+    final themeMode = ref.watch(themeModeProvider);
 
     return MaterialApp(
       debugShowCheckedModeBanner: false,
@@ -44,6 +46,14 @@ class LiveChatApp extends ConsumerWidget {
         ),
         useMaterial3: true,
       ),
+      darkTheme: ThemeData(
+        colorScheme: ColorScheme.fromSeed(
+          seedColor: const Color(0xFF1F8A70),
+          brightness: Brightness.dark,
+        ),
+        useMaterial3: true,
+      ),
+      themeMode: themeMode,
       home: bootstrapState.when(
         loading: () => const _SplashScreen(),
         error: (error, stackTrace) => _SetupRequiredScreen(error: error.toString()),

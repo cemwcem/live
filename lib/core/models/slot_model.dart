@@ -5,6 +5,7 @@ class SlotModel {
     required this.online,
     required this.lastSeen,
     this.clientInfo,
+    this.notificationEmail,
   });
 
   final String nick;
@@ -12,6 +13,7 @@ class SlotModel {
   final bool online;
   final int lastSeen;
   final Map<String, dynamic>? clientInfo;
+  final String? notificationEmail;
 
   SlotModel copyWith({
     String? nick,
@@ -19,6 +21,7 @@ class SlotModel {
     bool? online,
     int? lastSeen,
     Map<String, dynamic>? clientInfo,
+    String? notificationEmail,
   }) {
     return SlotModel(
       nick: nick ?? this.nick,
@@ -26,6 +29,7 @@ class SlotModel {
       online: online ?? this.online,
       lastSeen: lastSeen ?? this.lastSeen,
       clientInfo: clientInfo ?? this.clientInfo,
+      notificationEmail: notificationEmail ?? this.notificationEmail,
     );
   }
 
@@ -38,6 +42,7 @@ class SlotModel {
       clientInfo: json['clientInfo'] is Map
           ? (json['clientInfo'] as Map).cast<String, dynamic>()
           : null,
+      notificationEmail: json['notificationEmail'] as String?,
     );
   }
 
@@ -48,6 +53,7 @@ class SlotModel {
       'online': online,
       'lastSeen': lastSeen,
       'clientInfo': clientInfo,
+      'notificationEmail': notificationEmail,
     };
   }
 }

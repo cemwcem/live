@@ -190,7 +190,10 @@ class FirebaseAuthRepository implements AuthRepository {
     int now,
   ) async {
     final clientInfo = await ClientInfo.collect();
-    await channelRef.child('slots/$slotId').set({
+    // update() kullanılıyor (set() değil): böylece Profil > Bildirim'de
+    // kaydedilen notificationEmail gibi diğer slot alanları her
+    // girişte/resume'da silinmez.
+    await channelRef.child('slots/$slotId').update({
       'nick': nick,
       'sessionId': sessionId,
       'online': true,
