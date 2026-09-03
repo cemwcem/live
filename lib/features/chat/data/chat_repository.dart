@@ -1,4 +1,8 @@
+import 'dart:typed_data';
+
 import 'package:firebase_database/firebase_database.dart';
+import 'package:firebase_storage/firebase_storage.dart';
+import 'package:uuid/uuid.dart';
 
 import '../../../core/firebase/firebase_service.dart';
 import '../../../core/models/channel_model.dart';
@@ -7,6 +11,16 @@ import '../../../core/models/message_model.dart';
 import '../../../core/models/message_cleanup_request_model.dart';
 import '../../../core/models/message_cleanup_result_model.dart';
 import '../../../core/models/slot_model.dart';
+
+class UploadedAttachment {
+  const UploadedAttachment({
+    required this.url,
+    required this.storagePath,
+  });
+
+  final String url;
+  final String storagePath;
+}
 
 abstract class ChatRepository {
   Stream<ChannelModel?> watchChannel({required String channelName});
@@ -74,6 +88,21 @@ abstract class ChatRepository {
     String? replyToMessageId,
     String? replyToSenderNick,
     String? replyToText,
+    String? attachmentUrl,
+    String? attachmentStoragePath,
+    String? attachmentFileName,
+    String? attachmentMimeType,
+    bool isViewOnce,
+  });
+  Future<UploadedAttachment> uploadAttachment({
+    required String channelName,
+    required Uint8List bytes,
+    required String fileName,
+    required String mimeType,
+  });
+  Future<void> markAttachmentViewed({
+    required String channelName,
+    required String messageId,
   });
   Future<void> acknowledgeMessages({
     required String channelName,
@@ -217,6 +246,34 @@ class FirebaseChatRepository implements ChatRepository {
     return messages;
   }
 
+  // Silinecek mesajlar arasında Storage'a yüklenmiş bir dosya varsa
+  // (attachmentStoragePath alanı doluysa) mesaj Realtime Database'den
+  // silinmeden önce ilişkili dosya Storage'dan da siliniyor. Tek seferlik
+  // (view-once) resimler görüntülenince zaten Storage'dan silinip bu alanı
+  // temizlediği için burada tekrar silinmeye çalışılmıyor.
+  Future<void> _deleteAttachmentStorageFiles(Map value) async {
+    final storage = FirebaseService.storage();
+    if (storage == null) {
+      return;
+    }
+    for (final entry in value.entries) {
+      if (entry.value is! Map) {
+        continue;
+      }
+      final data = (entry.value as Map).cast<String, dynamic>();
+      final storagePath = data['attachmentStoragePath'] as String?;
+      if (storagePath == null || storagePath.isEmpty) {
+        continue;
+      }
+      try {
+        await storage.ref(storagePath).delete();
+      } catch (_) {
+        // Dosya zaten silinmiş olabilir; mesaj temizliğinin geri kalanını
+        // engellememesi için hata yutuluyor.
+      }
+    }
+  }
+
   @override
   Future<int> deleteMessagesByRetention({
     required String channelName,
@@ -241,6 +298,8 @@ class FirebaseChatRepository implements ChatRepository {
         return 0;
       }
 
+      await _deleteAttachmentStorageFiles(value);
+
       final updates = <String, Object?>{};
       for (final entry in value.entries) {
         updates['messages/${entry.key}'] = null;
@@ -260,6 +319,8 @@ class FirebaseChatRepository implements ChatRepository {
     if (value is! Map) {
       return 0;
     }
+
+    await _deleteAttachmentStorageFiles(value);
 
     final updates = <String, Object?>{};
     for (final entry in value.entries) {
@@ -299,6 +360,8 @@ class FirebaseChatRepository implements ChatRepository {
     if (value is! Map) {
       return 0;
     }
+
+    await _deleteAttachmentStorageFiles(value);
 
     final updates = <String, Object?>{};
     for (final entry in value.entries) {
@@ -537,6 +600,11 @@ class FirebaseChatRepository implements ChatRepository {
     String? replyToMessageId,
     String? replyToSenderNick,
     String? replyToText,
+    String? attachmentUrl,
+    String? attachmentStoragePath,
+    String? attachmentFileName,
+    String? attachmentMimeType,
+    bool isViewOnce = false,
   }) async {
     final ref = _channelReference(channelName);
     if (ref == null) {
@@ -561,6 +629,8 @@ class FirebaseChatRepository implements ChatRepository {
       'senderLastSeen': senderLastSeen,
       'deliveredSlots': {slotId: true},
       'readSlots': {slotId: true},
+      'isViewOnce': isViewOnce,
+      'isViewed': false,
       ...?replyToMessageId == null
           ? null
           : {'replyToMessageId': replyToMessageId},
@@ -568,12 +638,75 @@ class FirebaseChatRepository implements ChatRepository {
           ? null
           : {'replyToSenderNick': replyToSenderNick},
       ...?replyToText == null ? null : {'replyToText': replyToText},
+      ...?attachmentUrl == null ? null : {'attachmentUrl': attachmentUrl},
+      ...?attachmentStoragePath == null
+          ? null
+          : {'attachmentStoragePath': attachmentStoragePath},
+      ...?attachmentFileName == null
+          ? null
+          : {'attachmentFileName': attachmentFileName},
+      ...?attachmentMimeType == null
+          ? null
+          : {'attachmentMimeType': attachmentMimeType},
     });
     // lastMessageSentAt mesaj yazıldıktan sonra güncellenir.
     // CF değeri zaten message.senderLastSeen'den okuduğu için sırası önemli değil.
     await ref.child('slots/$slotId/lastMessageSentAt').set(now);
     await ref.child('liveTyping/$slotId').set('');
     await _touchPresence(ref: ref, slotId: slotId);
+  }
+
+  @override
+  Future<UploadedAttachment> uploadAttachment({
+    required String channelName,
+    required Uint8List bytes,
+    required String fileName,
+    required String mimeType,
+  }) async {
+    final storage = FirebaseService.storage();
+    if (storage == null) {
+      throw StateError('Firebase is not configured yet.');
+    }
+
+    final safeFileName = fileName.trim().isEmpty ? 'dosya' : fileName.trim();
+    final storagePath =
+        'channel_attachments/${channelName.trim()}/${const Uuid().v4()}_$safeFileName';
+    final storageRef = storage.ref(storagePath);
+    await storageRef.putData(bytes, SettableMetadata(contentType: mimeType));
+    final url = await storageRef.getDownloadURL();
+    return UploadedAttachment(url: url, storagePath: storagePath);
+  }
+
+  @override
+  Future<void> markAttachmentViewed({
+    required String channelName,
+    required String messageId,
+  }) async {
+    final ref = _channelReference(channelName);
+    if (ref == null) {
+      return;
+    }
+
+    final messageRef = ref.child('messages/$messageId');
+    final snapshot = await messageRef.child('attachmentStoragePath').get();
+    final storagePath = snapshot.value as String?;
+    if (storagePath != null && storagePath.isNotEmpty) {
+      final storage = FirebaseService.storage();
+      if (storage != null) {
+        try {
+          await storage.ref(storagePath).delete();
+        } catch (_) {
+          // Dosya zaten silinmiş olabilir; görüntülendi işaretlemesini
+          // engellememesi için hata yutuluyor.
+        }
+      }
+    }
+
+    await messageRef.update({
+      'isViewed': true,
+      'attachmentUrl': null,
+      'attachmentStoragePath': null,
+    });
   }
 
   @override

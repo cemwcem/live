@@ -1,9 +1,11 @@
 import 'dart:async';
 
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../../../core/app_release.dart';
 import '../../../core/models/message_model.dart';
@@ -30,6 +32,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     with WidgetsBindingObserver {
   static const int _maxMessageChars = 2000;
   static const int _typingIndicatorGraceMs = 2200;
+  static const int _maxAttachmentBytes = 10 * 1024 * 1024; // 10 MB
 
   final _composerController = TextEditingController();
   final _peerTypingController = TextEditingController();
@@ -62,6 +65,12 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
   String? _menuOpenMessageId;
   bool _jumpToReplyInProgress = false;
   bool _isSendingMessage = false;
+  Uint8List? _pendingAttachmentBytes;
+  String? _pendingAttachmentFileName;
+  String? _pendingAttachmentMimeType;
+  bool _pendingIsViewOnce = false;
+  bool _isUploadingAttachment = false;
+  final Set<String> _openingViewOnceMessageIds = {};
 
   @override
   void initState() {
@@ -506,6 +515,261 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     });
   }
 
+  bool _isImageMime(String? mimeType) {
+    return mimeType != null && mimeType.startsWith('image/');
+  }
+
+  String _guessMimeType(String fileName) {
+    final extension = fileName.contains('.') ? fileName.split('.').last.toLowerCase() : '';
+    switch (extension) {
+      case 'jpg':
+      case 'jpeg':
+        return 'image/jpeg';
+      case 'png':
+        return 'image/png';
+      case 'gif':
+        return 'image/gif';
+      case 'webp':
+        return 'image/webp';
+      case 'bmp':
+        return 'image/bmp';
+      case 'pdf':
+        return 'application/pdf';
+      default:
+        return 'application/octet-stream';
+    }
+  }
+
+  String _formatFileSize(int bytes) {
+    if (bytes < 1024) {
+      return '$bytes B';
+    }
+    if (bytes < 1024 * 1024) {
+      return '${(bytes / 1024).toStringAsFixed(1)} KB';
+    }
+    return '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB';
+  }
+
+  void _clearPendingAttachment() {
+    if (_pendingAttachmentBytes == null) {
+      return;
+    }
+    setState(() {
+      _pendingAttachmentBytes = null;
+      _pendingAttachmentFileName = null;
+      _pendingAttachmentMimeType = null;
+      _pendingIsViewOnce = false;
+    });
+  }
+
+  Future<void> _pickAttachment() async {
+    final file = await FilePicker.pickFile();
+    if (file == null || !mounted) {
+      return;
+    }
+
+    final length = file.lengthSync() ?? await file.length();
+    if (length > _maxAttachmentBytes) {
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            'Dosya çok büyük (en fazla ${_formatFileSize(_maxAttachmentBytes)}).',
+          ),
+        ),
+      );
+      return;
+    }
+
+    final bytes = await file.readAsBytes();
+    if (!mounted) {
+      return;
+    }
+
+    setState(() {
+      _pendingAttachmentBytes = bytes;
+      _pendingAttachmentFileName = file.name;
+      _pendingAttachmentMimeType = _guessMimeType(file.name);
+      _pendingIsViewOnce = false;
+    });
+  }
+
+  Widget _buildAttachmentPreview() {
+    final bytes = _pendingAttachmentBytes;
+    if (bytes == null) {
+      return const SizedBox.shrink();
+    }
+    final isImage = _isImageMime(_pendingAttachmentMimeType);
+
+    return Container(
+      margin: const EdgeInsets.fromLTRB(16, 4, 16, 0),
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF1F4F8),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: const Color(0xFFD9E0E8)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              ClipRRect(
+                borderRadius: BorderRadius.circular(8),
+                child: isImage
+                    ? Image.memory(
+                        bytes,
+                        width: 48,
+                        height: 48,
+                        fit: BoxFit.cover,
+                      )
+                    : Container(
+                        width: 48,
+                        height: 48,
+                        color: Colors.black12,
+                        alignment: Alignment.center,
+                        child: const Icon(Icons.insert_drive_file_outlined),
+                      ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      _pendingAttachmentFileName ?? 'Dosya',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(fontWeight: FontWeight.w600),
+                    ),
+                    Text(
+                      _formatFileSize(bytes.length),
+                      style: const TextStyle(fontSize: 11, color: Colors.black54),
+                    ),
+                  ],
+                ),
+              ),
+              IconButton(
+                icon: const Icon(Icons.close_rounded, size: 18),
+                tooltip: 'Seçimi iptal et',
+                onPressed: _isUploadingAttachment ? null : _clearPendingAttachment,
+              ),
+            ],
+          ),
+          if (isImage)
+            Row(
+              children: [
+                Checkbox(
+                  value: _pendingIsViewOnce,
+                  onChanged: _isUploadingAttachment
+                      ? null
+                      : (value) {
+                          setState(() {
+                            _pendingIsViewOnce = value ?? false;
+                          });
+                        },
+                ),
+                const Text('Tek seferlik görüntüleme', style: TextStyle(fontSize: 13)),
+              ],
+            ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _handleSend() async {
+    if (_isSendingMessage) {
+      return;
+    }
+    final text = _composerController.text.trim();
+    final attachmentBytes = _pendingAttachmentBytes;
+    final hasAttachment = attachmentBytes != null;
+    if (text.isEmpty && !hasAttachment) {
+      return;
+    }
+
+    final replyTarget = _replyTarget;
+    final attachmentFileName = _pendingAttachmentFileName;
+    final attachmentMimeType = _pendingAttachmentMimeType;
+    final isViewOnce = _pendingIsViewOnce;
+
+    _isSendingMessage = true;
+    if (hasAttachment) {
+      setState(() {
+        _isUploadingAttachment = true;
+      });
+    }
+
+    try {
+      String? attachmentUrl;
+      String? attachmentStoragePath;
+      if (hasAttachment) {
+        final uploaded = await ref
+            .read(chatServiceProvider)
+            .uploadAttachment(
+              channelName: widget.session.channelName,
+              bytes: attachmentBytes,
+              fileName: attachmentFileName ?? 'dosya',
+              mimeType: attachmentMimeType ?? 'application/octet-stream',
+            );
+        attachmentUrl = uploaded.url;
+        attachmentStoragePath = uploaded.storagePath;
+      }
+
+      await ref
+          .read(chatServiceProvider)
+          .sendMessage(
+            channelName: widget.session.channelName,
+            slotId: widget.session.slotId,
+            nick: widget.session.nick,
+            text: text,
+            replyToMessageId: replyTarget?.id,
+            replyToSenderNick: replyTarget?.senderNick,
+            replyToText: replyTarget == null
+                ? null
+                : _replyPreviewText(
+                    EmojiShortcodes.emojify(replyTarget.text),
+                  ),
+            attachmentUrl: attachmentUrl,
+            attachmentStoragePath: attachmentStoragePath,
+            attachmentFileName: hasAttachment ? attachmentFileName : null,
+            attachmentMimeType: hasAttachment ? attachmentMimeType : null,
+            isViewOnce: hasAttachment && isViewOnce,
+          );
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              hasAttachment
+                  ? 'Dosya gönderilemedi, bağlantı kontrol edilip tekrar denenecek.'
+                  : 'Mesaj gönderilemedi, bağlantı kontrol edilip tekrar denenecek.',
+            ),
+          ),
+        );
+      }
+      return;
+    } finally {
+      _isSendingMessage = false;
+      if (mounted) {
+        setState(() {
+          _isUploadingAttachment = false;
+        });
+      }
+    }
+
+    if (!mounted) {
+      return;
+    }
+    _composerController.clear();
+    _charLimitWarningVisible = false;
+    _clearReplyTarget();
+    _clearPendingAttachment();
+  }
+
   Future<void> _openMessageActions(MessageModel message) async {
     if (!mounted) {
       return;
@@ -692,6 +956,201 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     } finally {
       _jumpToReplyInProgress = false;
     }
+  }
+
+  Future<void> _openViewOnceImage(MessageModel message) async {
+    final messageId = message.id;
+    final url = message.attachmentUrl;
+    if (messageId == null || url == null || url.isEmpty) {
+      return;
+    }
+    if (_openingViewOnceMessageIds.contains(messageId)) {
+      return;
+    }
+
+    setState(() {
+      _openingViewOnceMessageIds.add(messageId);
+    });
+
+    try {
+      if (!mounted) {
+        return;
+      }
+      await showDialog<void>(
+        context: context,
+        builder: (context) {
+          return Dialog(
+            backgroundColor: Colors.black,
+            insetPadding: const EdgeInsets.all(16),
+            child: Stack(
+              alignment: Alignment.topRight,
+              children: [
+                InteractiveViewer(
+                  child: Image.network(url, fit: BoxFit.contain),
+                ),
+                IconButton(
+                  icon: const Icon(Icons.close, color: Colors.white),
+                  onPressed: () => Navigator.of(context).pop(),
+                ),
+              ],
+            ),
+          );
+        },
+      );
+
+      await ref
+          .read(chatServiceProvider)
+          .markAttachmentViewed(
+            channelName: widget.session.channelName,
+            messageId: messageId,
+          );
+    } finally {
+      if (mounted) {
+        setState(() {
+          _openingViewOnceMessageIds.remove(messageId);
+        });
+      }
+    }
+  }
+
+  Future<void> _openNormalImage(String url) async {
+    if (!mounted) {
+      return;
+    }
+    await showDialog<void>(
+      context: context,
+      builder: (context) {
+        return Dialog(
+          backgroundColor: Colors.black,
+          insetPadding: const EdgeInsets.all(16),
+          child: Stack(
+            alignment: Alignment.topRight,
+            children: [
+              InteractiveViewer(
+                child: Image.network(url, fit: BoxFit.contain),
+              ),
+              IconButton(
+                icon: const Icon(Icons.close, color: Colors.white),
+                onPressed: () => Navigator.of(context).pop(),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  Future<void> _openAttachmentFile(String url) async {
+    final uri = Uri.tryParse(url);
+    if (uri == null) {
+      return;
+    }
+    await launchUrl(uri, webOnlyWindowName: '_blank');
+  }
+
+  Widget _buildAttachmentContent({required MessageModel message}) {
+    if (message.isViewOnce && message.isViewed) {
+      return Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+        decoration: BoxDecoration(
+          color: Colors.black12,
+          borderRadius: BorderRadius.circular(10),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: const [
+            Icon(Icons.visibility_off_outlined, size: 16),
+            SizedBox(width: 6),
+            Text('Görüntülendi', style: TextStyle(fontSize: 12)),
+          ],
+        ),
+      );
+    }
+
+    if (!message.hasAttachment) {
+      return const SizedBox.shrink();
+    }
+
+    if (message.isViewOnce) {
+      final messageId = message.id;
+      final isOpening = messageId != null &&
+          _openingViewOnceMessageIds.contains(messageId);
+      return InkWell(
+        borderRadius: BorderRadius.circular(10),
+        onTap: isOpening ? null : () => _openViewOnceImage(message),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
+          decoration: BoxDecoration(
+            color: Colors.black.withValues(alpha: 0.06),
+            borderRadius: BorderRadius.circular(10),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              isOpening
+                  ? const SizedBox(
+                      width: 16,
+                      height: 16,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Icon(Icons.visibility_outlined, size: 18),
+              const SizedBox(width: 8),
+              const Text(
+                'Tek seferlik resim — görmek için dokun',
+                style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    if (message.isImageAttachment) {
+      return ClipRRect(
+        borderRadius: BorderRadius.circular(10),
+        child: InkWell(
+          onTap: () => _openNormalImage(message.attachmentUrl!),
+          child: Image.network(
+            message.attachmentUrl!,
+            width: 220,
+            fit: BoxFit.cover,
+            errorBuilder: (context, error, stackTrace) => Container(
+              width: 220,
+              height: 140,
+              color: Colors.black12,
+              alignment: Alignment.center,
+              child: const Icon(Icons.broken_image_outlined),
+            ),
+          ),
+        ),
+      );
+    }
+
+    return InkWell(
+      borderRadius: BorderRadius.circular(10),
+      onTap: () => _openAttachmentFile(message.attachmentUrl!),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
+        decoration: BoxDecoration(
+          color: Colors.black.withValues(alpha: 0.06),
+          borderRadius: BorderRadius.circular(10),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(Icons.insert_drive_file_outlined, size: 18),
+            const SizedBox(width: 8),
+            Flexible(
+              child: Text(
+                message.attachmentFileName ?? 'Dosya',
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 
   Widget _buildMessageMetaSlot({
@@ -1605,6 +2064,17 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
                                             ),
                                           ),
                                         ),
+                                      if (message.hasAttachment ||
+                                          (message.isViewOnce &&
+                                              message.isViewed))
+                                        Padding(
+                                          padding: const EdgeInsets.only(
+                                            bottom: 6,
+                                          ),
+                                          child: _buildAttachmentContent(
+                                            message: message,
+                                          ),
+                                        ),
                                       Builder(
                                         builder: (context) {
                                           final messageText = EmojiShortcodes.emojify(
@@ -1680,109 +2150,82 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
               },
             ),
           ),
-          LiveTypingBox(
-            label: '',
-            badgeLabel: ownNick,
-            badgeColor: widget.session.slotId == 'slot1'
-                ? Colors.green
-                : Colors.red,
-            controller: _composerController,
-            enabled: true,
-            readOnly: false,
-            onChanged: (value) {
-              if (value.length >= _maxMessageChars) {
-                _showMessageLimitWarning();
-              } else {
-                _charLimitWarningVisible = false;
-              }
-              _scheduleTypingUpdate(
-                targetSlotId: widget.session.slotId,
-                text: value,
-              );
-            },
-            textTransformer: EmojiShortcodes.emojify,
-            onSend: () async {
-              if (_isSendingMessage) {
-                return;
-              }
-              final text = _composerController.text.trim();
-              if (text.isEmpty) {
-                return;
-              }
-              final replyTarget = _replyTarget;
-              _isSendingMessage = true;
-              try {
-                await ref
-                    .read(chatServiceProvider)
-                    .sendMessage(
-                      channelName: widget.session.channelName,
-                      slotId: widget.session.slotId,
-                      nick: widget.session.nick,
-                      text: text,
-                      replyToMessageId: replyTarget?.id,
-                      replyToSenderNick: replyTarget?.senderNick,
-                      replyToText: replyTarget == null
-                          ? null
-                          : _replyPreviewText(
-                              EmojiShortcodes.emojify(replyTarget.text),
-                            ),
+          if (_pendingAttachmentBytes != null) _buildAttachmentPreview(),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
+              Padding(
+                padding: const EdgeInsets.only(left: 8, bottom: 10),
+                child: IconButton(
+                  icon: const Icon(Icons.attach_file_rounded),
+                  tooltip: 'Dosya/resim ekle',
+                  onPressed: _isUploadingAttachment ? null : _pickAttachment,
+                ),
+              ),
+              Expanded(
+                child: LiveTypingBox(
+                  label: '',
+                  badgeLabel: ownNick,
+                  badgeColor: widget.session.slotId == 'slot1'
+                      ? Colors.green
+                      : Colors.red,
+                  controller: _composerController,
+                  enabled: true,
+                  readOnly: false,
+                  onChanged: (value) {
+                    if (value.length >= _maxMessageChars) {
+                      _showMessageLimitWarning();
+                    } else {
+                      _charLimitWarningVisible = false;
+                    }
+                    _scheduleTypingUpdate(
+                      targetSlotId: widget.session.slotId,
+                      text: value,
                     );
-              } catch (_) {
-                if (context.mounted) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(
-                      content: Text(
-                        'Mesaj gönderilemedi, bağlantı kontrol edilip tekrar denenecek.',
-                      ),
-                    ),
-                  );
-                }
-                return;
-              } finally {
-                _isSendingMessage = false;
-              }
-              _composerController.clear();
-              _charLimitWarningVisible = false;
-              _clearReplyTarget();
-            },
-            sendEnabled: true,
-            submitOnEnter: kIsWeb &&
-                (defaultTargetPlatform == TargetPlatform.macOS ||
-                    defaultTargetPlatform == TargetPlatform.windows ||
-                    defaultTargetPlatform == TargetPlatform.linux),
-            showHeader: false,
-            sendInline: true,
-            maxLength: _maxMessageChars,
-            onMaxLengthReached: _showMessageLimitWarning,
-            showCursorNick: true,
-            cursorNick: ownNick,
-            containerColor: const Color(0xFFEAF8EF),
-            inputFillColor: const Color(0xFFF8FCF9),
-            inputBorderColor: const Color(0xFFBFDCCB),
-            inputTextColor: Colors.black87,
-            onCursorChanged: (offset) {
-              _scheduleCursorUpdate(
-                targetSlotId: widget.session.slotId,
-                nick: ownNick,
-                offset: offset,
-              );
-            },
-            remoteCursorNick: showRemoteCursorOnOwnSlot
-                ? ownSlotCursor.nick
-                : null,
-            remoteCursorOffset: showRemoteCursorOnOwnSlot
-                ? ownSlotCursor.offset
-                : null,
-            remoteCursorColor: const Color(0xFF0A4F96),
-            helperText: 'Mesajı yalnızca kendi alanından gönderebilirsin',
-            compact: true,
-            replyPreviewNick: _replyTarget?.senderNick,
-            replyPreviewText: _replyTarget == null
-                ? null
-                : _replyPreviewText(
-                    EmojiShortcodes.emojify(_replyTarget!.text),
-                  ),
-            onClearReply: _clearReplyTarget,
+                  },
+                  textTransformer: EmojiShortcodes.emojify,
+                  onSend: _handleSend,
+                  sendEnabled: !_isUploadingAttachment,
+                  submitOnEnter: kIsWeb &&
+                      (defaultTargetPlatform == TargetPlatform.macOS ||
+                          defaultTargetPlatform == TargetPlatform.windows ||
+                          defaultTargetPlatform == TargetPlatform.linux),
+                  showHeader: false,
+                  sendInline: true,
+                  maxLength: _maxMessageChars,
+                  onMaxLengthReached: _showMessageLimitWarning,
+                  showCursorNick: true,
+                  cursorNick: ownNick,
+                  containerColor: const Color(0xFFEAF8EF),
+                  inputFillColor: const Color(0xFFF8FCF9),
+                  inputBorderColor: const Color(0xFFBFDCCB),
+                  inputTextColor: Colors.black87,
+                  onCursorChanged: (offset) {
+                    _scheduleCursorUpdate(
+                      targetSlotId: widget.session.slotId,
+                      nick: ownNick,
+                      offset: offset,
+                    );
+                  },
+                  remoteCursorNick: showRemoteCursorOnOwnSlot
+                      ? ownSlotCursor.nick
+                      : null,
+                  remoteCursorOffset: showRemoteCursorOnOwnSlot
+                      ? ownSlotCursor.offset
+                      : null,
+                  remoteCursorColor: const Color(0xFF0A4F96),
+                  helperText: 'Mesajı yalnızca kendi alanından gönderebilirsin',
+                  compact: true,
+                  replyPreviewNick: _replyTarget?.senderNick,
+                  replyPreviewText: _replyTarget == null
+                      ? null
+                      : _replyPreviewText(
+                          EmojiShortcodes.emojify(_replyTarget!.text),
+                        ),
+                  onClearReply: _clearReplyTarget,
+                ),
+              ),
+            ],
           ),
           Padding(
             padding: const EdgeInsets.fromLTRB(12, 4, 12, 8),

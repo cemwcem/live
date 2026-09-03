@@ -74,7 +74,8 @@ exports.onNewMessage = onValueCreated(
       }
 
       const senderNick = message.senderNick;
-      const messageText = message.text || "";
+      const messageText = message.text ||
+        (message.attachmentUrl ? "📎 Dosya/resim gönderdi" : "");
       // Mesaj timestamp'i lastSeen farkı hesabında referans olarak kullanılır.
       const messageTimestamp = message.timestamp || Date.now();
 

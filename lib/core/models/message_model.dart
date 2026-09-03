@@ -10,6 +10,12 @@ class MessageModel {
     this.replyToMessageId,
     this.replyToSenderNick,
     this.replyToText,
+    this.attachmentUrl,
+    this.attachmentStoragePath,
+    this.attachmentFileName,
+    this.attachmentMimeType,
+    this.isViewOnce = false,
+    this.isViewed = false,
   });
 
   final String? id;
@@ -23,6 +29,20 @@ class MessageModel {
   final String? replyToSenderNick;
   final String? replyToText;
 
+  // Ek dosya (resim/dosya) alanları — voice message gibi gelecekteki ek
+  // türleri de aynı attachmentUrl/attachmentStoragePath/attachmentMimeType
+  // üçlüsünü kullanabilir.
+  final String? attachmentUrl;
+  final String? attachmentStoragePath;
+  final String? attachmentFileName;
+  final String? attachmentMimeType;
+  final bool isViewOnce;
+  final bool isViewed;
+
+  bool get hasAttachment => attachmentUrl != null && attachmentUrl!.isNotEmpty;
+  bool get isImageAttachment =>
+      attachmentMimeType != null && attachmentMimeType!.startsWith('image/');
+
   MessageModel copyWith({
     String? id,
     String? senderNick,
@@ -34,6 +54,12 @@ class MessageModel {
     String? replyToMessageId,
     String? replyToSenderNick,
     String? replyToText,
+    String? attachmentUrl,
+    String? attachmentStoragePath,
+    String? attachmentFileName,
+    String? attachmentMimeType,
+    bool? isViewOnce,
+    bool? isViewed,
   }) {
     return MessageModel(
       id: id ?? this.id,
@@ -46,6 +72,12 @@ class MessageModel {
       replyToMessageId: replyToMessageId ?? this.replyToMessageId,
       replyToSenderNick: replyToSenderNick ?? this.replyToSenderNick,
       replyToText: replyToText ?? this.replyToText,
+      attachmentUrl: attachmentUrl ?? this.attachmentUrl,
+      attachmentStoragePath: attachmentStoragePath ?? this.attachmentStoragePath,
+      attachmentFileName: attachmentFileName ?? this.attachmentFileName,
+      attachmentMimeType: attachmentMimeType ?? this.attachmentMimeType,
+      isViewOnce: isViewOnce ?? this.isViewOnce,
+      isViewed: isViewed ?? this.isViewed,
     );
   }
 
@@ -72,6 +104,12 @@ class MessageModel {
       replyToMessageId: json['replyToMessageId'] as String?,
       replyToSenderNick: json['replyToSenderNick'] as String?,
       replyToText: json['replyToText'] as String?,
+      attachmentUrl: json['attachmentUrl'] as String?,
+      attachmentStoragePath: json['attachmentStoragePath'] as String?,
+      attachmentFileName: json['attachmentFileName'] as String?,
+      attachmentMimeType: json['attachmentMimeType'] as String?,
+      isViewOnce: json['isViewOnce'] as bool? ?? false,
+      isViewed: json['isViewed'] as bool? ?? false,
     );
   }
 
@@ -83,6 +121,8 @@ class MessageModel {
       'timestamp': timestamp,
       'deliveredSlots': deliveredSlots,
       'readSlots': readSlots,
+      'isViewOnce': isViewOnce,
+      'isViewed': isViewed,
       ...?replyToMessageId == null
           ? null
           : {'replyToMessageId': replyToMessageId},
@@ -90,6 +130,16 @@ class MessageModel {
           ? null
           : {'replyToSenderNick': replyToSenderNick},
       ...?replyToText == null ? null : {'replyToText': replyToText},
+      ...?attachmentUrl == null ? null : {'attachmentUrl': attachmentUrl},
+      ...?attachmentStoragePath == null
+          ? null
+          : {'attachmentStoragePath': attachmentStoragePath},
+      ...?attachmentFileName == null
+          ? null
+          : {'attachmentFileName': attachmentFileName},
+      ...?attachmentMimeType == null
+          ? null
+          : {'attachmentMimeType': attachmentMimeType},
     };
   }
 }

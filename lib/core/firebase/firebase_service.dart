@@ -1,6 +1,7 @@
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_database/firebase_database.dart';
+import 'package:firebase_storage/firebase_storage.dart';
 
 import '../../firebase_options.dart';
 
@@ -59,6 +60,13 @@ class FirebaseService {
       return null;
     }
     return root.child('channels/${channelName.trim()}');
+  }
+
+  static FirebaseStorage? storage() {
+    if (!isInitialized) {
+      return null;
+    }
+    return FirebaseStorage.instanceFor(app: app);
   }
 
   static Future<void> _ensureAnonymousAuth() async {

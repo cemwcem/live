@@ -1,3 +1,5 @@
+import 'dart:typed_data';
+
 import '../../../core/models/channel_model.dart';
 import '../../../core/models/cursor_presence_model.dart';
 import '../../../core/models/message_model.dart';
@@ -27,6 +29,11 @@ class ChatService {
     String? replyToMessageId,
     String? replyToSenderNick,
     String? replyToText,
+    String? attachmentUrl,
+    String? attachmentStoragePath,
+    String? attachmentFileName,
+    String? attachmentMimeType,
+    bool isViewOnce = false,
   }) {
     return _repository.sendMessage(
       channelName: channelName,
@@ -36,6 +43,35 @@ class ChatService {
       replyToMessageId: replyToMessageId,
       replyToSenderNick: replyToSenderNick,
       replyToText: replyToText,
+      attachmentUrl: attachmentUrl,
+      attachmentStoragePath: attachmentStoragePath,
+      attachmentFileName: attachmentFileName,
+      attachmentMimeType: attachmentMimeType,
+      isViewOnce: isViewOnce,
+    );
+  }
+
+  Future<UploadedAttachment> uploadAttachment({
+    required String channelName,
+    required Uint8List bytes,
+    required String fileName,
+    required String mimeType,
+  }) {
+    return _repository.uploadAttachment(
+      channelName: channelName,
+      bytes: bytes,
+      fileName: fileName,
+      mimeType: mimeType,
+    );
+  }
+
+  Future<void> markAttachmentViewed({
+    required String channelName,
+    required String messageId,
+  }) {
+    return _repository.markAttachmentViewed(
+      channelName: channelName,
+      messageId: messageId,
     );
   }
 

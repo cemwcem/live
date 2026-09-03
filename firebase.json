@@ -2,6 +2,9 @@
   "database": {
     "rules": "database.rules.json"
   },
+  "storage": {
+    "rules": "storage.rules"
+  },
   "hosting": {
     "predeploy": [
       "dart run scripts/generate_release.dart",
