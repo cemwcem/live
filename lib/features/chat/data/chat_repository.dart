@@ -135,6 +135,11 @@ abstract class ChatRepository {
     required String slotId,
     required String? email,
   });
+  Future<void> setOnlineNotification({
+    required String channelName,
+    required String slotId,
+    required OnlineNotificationSettings settings,
+  });
 }
 
 class FirebaseChatRepository implements ChatRepository {
@@ -849,5 +854,20 @@ class FirebaseChatRepository implements ChatRepository {
     await ref
         .child('slots/$slotId/notificationEmail')
         .set(trimmed == null || trimmed.isEmpty ? null : trimmed);
+  }
+
+  @override
+  Future<void> setOnlineNotification({
+    required String channelName,
+    required String slotId,
+    required OnlineNotificationSettings settings,
+  }) async {
+    final ref = _channelReference(channelName);
+    if (ref == null) {
+      return;
+    }
+    await ref
+        .child('slots/$slotId/onlineNotification')
+        .set(settings.toJson());
   }
 }

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../core/models/slot_model.dart';
 import '../../../core/theme/theme_provider.dart';
 import '../../auth/domain/auth_service.dart';
 import '../../chat/presentation/chat_provider.dart';
@@ -18,6 +19,7 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
   final _emailController = TextEditingController();
   bool _isSaving = false;
   bool _editedByUser = false;
+  bool _isSavingOnline = false;
 
   @override
   void dispose() {
@@ -75,6 +77,134 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
     }
   }
 
+  Future<void> _saveOnlineNotification(OnlineNotificationSettings settings) async {
+    setState(() {
+      _isSavingOnline = true;
+    });
+    try {
+      await ref.read(chatServiceProvider).setOnlineNotification(
+            channelName: widget.session.channelName,
+            slotId: widget.session.slotId,
+            settings: settings,
+          );
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Kaydedilemedi, tekrar deneyin.')),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isSavingOnline = false;
+        });
+      }
+    }
+  }
+
+  String _hoursLabel(int hours) => hours == 24 ? '24 saat (1 gün)' : '$hours saat';
+
+  Widget _buildOnlineNotificationCard({
+    required OnlineNotificationSettings settings,
+    required bool hasEmail,
+    required String otherNickHint,
+  }) {
+    final isTestChannel = _isTestChannel(widget.session.channelName);
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(8, 8, 16, 16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            CheckboxListTile(
+              contentPadding: const EdgeInsets.only(left: 8),
+              controlAffinity: ListTileControlAffinity.leading,
+              value: settings.enabled,
+              onChanged: _isSavingOnline
+                  ? null
+                  : (value) => _saveOnlineNotification(
+                        OnlineNotificationSettings(
+                          enabled: value ?? false,
+                          hours: settings.hours,
+                        ),
+                      ),
+              title: const Text('Karşı taraf çevrimiçi olunca bildir'),
+              subtitle: Text(
+                '$otherNickHint, seçtiğin süreden uzun süre çevrimdışı kaldıktan '
+                'sonra çevrimiçi olursa bildirim adresine e-posta gönderilir.',
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.only(left: 16),
+              child: Row(
+                children: [
+                  const Text('Çevrimdışı kalma süresi:'),
+                  const SizedBox(width: 12),
+                  DropdownButton<int>(
+                    value: settings.hours,
+                    onChanged: !settings.enabled || _isSavingOnline
+                        ? null
+                        : (value) {
+                            if (value == null) return;
+                            _saveOnlineNotification(
+                              OnlineNotificationSettings(
+                                enabled: settings.enabled,
+                                hours: value,
+                              ),
+                            );
+                          },
+                    items: [
+                      for (final hours in OnlineNotificationSettings.allowedHours)
+                        DropdownMenuItem(
+                          value: hours,
+                          child: Text(_hoursLabel(hours)),
+                        ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+            if (settings.enabled && !hasEmail)
+              Padding(
+                padding: const EdgeInsets.only(left: 16, top: 8),
+                child: Text(
+                  'Bildirim gitmesi için yukarıya gmail adresi kaydetmelisin.',
+                  style: TextStyle(color: Theme.of(context).colorScheme.error),
+                ),
+              ),
+            if (settings.enabled && isTestChannel)
+              Padding(
+                padding: const EdgeInsets.only(left: 16, top: 8),
+                child: Text(
+                  'Test kanalı: süre $_onlineTestDivisor\'de birine kısaltılır '
+                  '(${_formatTestDuration(settings.hours)}).',
+                  style: Theme.of(context).textTheme.bodySmall,
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// functions/config.js → ONLINE_TEST_DIVISOR ile aynı tutulmalı.
+  static const int _onlineTestDivisor = 100;
+
+  String _formatTestDuration(int hours) {
+    final totalSeconds = (hours * 3600 / _onlineTestDivisor).round();
+    final minutes = totalSeconds ~/ 60;
+    final seconds = totalSeconds % 60;
+    if (minutes == 0) return '$seconds saniye';
+    if (seconds == 0) return '$minutes dakika';
+    return '$minutes dakika $seconds saniye';
+  }
+
+  /// functions/index.js → resolveChannelType ile aynı kural.
+  bool _isTestChannel(String channelName) {
+    final normalized = channelName.toLowerCase();
+    return normalized.startsWith('deneme') || normalized.startsWith('test');
+  }
+
   Future<void> _showNotificationHelp() async {
     await showDialog<void>(
       context: context,
@@ -107,6 +237,22 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
       )),
     );
     final savedEmail = slotState.value?.notificationEmail;
+    // Ayar her zaman Firebase'deki slot verisinden okunur (elle yapılan
+    // değişiklikler de anında yansır).
+    final onlineSettings = slotState.value?.onlineNotification ??
+        const OnlineNotificationSettings();
+    final otherSlotId = widget.session.slotId == 'slot1' ? 'slot2' : 'slot1';
+    final otherNick = ref
+        .watch(
+          chatSlotProvider((
+            channelName: widget.session.channelName,
+            slotId: otherSlotId,
+          )),
+        )
+        .value
+        ?.nick;
+    final otherNickHint =
+        otherNick == null || otherNick.isEmpty ? 'Karşı taraf' : otherNick;
 
     if (!_editedByUser) {
       final text = savedEmail ?? '';
@@ -199,6 +345,12 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
                 ],
               ),
             ),
+          ),
+          const SizedBox(height: 16),
+          _buildOnlineNotificationCard(
+            settings: onlineSettings,
+            hasEmail: savedEmail != null && savedEmail.isNotEmpty,
+            otherNickHint: otherNickHint,
           ),
           const SizedBox(height: 16),
           Consumer(

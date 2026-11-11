@@ -1,3 +1,33 @@
+/// "Karşı taraf belli bir süre sonra çevrimiçi olunca mail at" ayarı.
+/// Firebase: channels/{kanal}/slots/{slotId}/onlineNotification
+///   { enabled: bool, hours: 1 | 2 | 4 | 8 | 24 }
+/// Elle düzenlenebilir; Cloud Function (functions/index.js) buradan okur.
+class OnlineNotificationSettings {
+  const OnlineNotificationSettings({
+    this.enabled = false,
+    this.hours = defaultHours,
+  });
+
+  static const List<int> allowedHours = [1, 2, 4, 8, 24];
+  static const int defaultHours = 1;
+
+  final bool enabled;
+  final int hours;
+
+  factory OnlineNotificationSettings.fromJson(dynamic json) {
+    if (json is! Map) {
+      return const OnlineNotificationSettings();
+    }
+    final hours = (json['hours'] as num?)?.toInt();
+    return OnlineNotificationSettings(
+      enabled: json['enabled'] == true,
+      hours: allowedHours.contains(hours) ? hours! : defaultHours,
+    );
+  }
+
+  Map<String, dynamic> toJson() => {'enabled': enabled, 'hours': hours};
+}
+
 class SlotModel {
   const SlotModel({
     required this.nick,
@@ -6,6 +36,7 @@ class SlotModel {
     required this.lastSeen,
     this.clientInfo,
     this.notificationEmail,
+    this.onlineNotification = const OnlineNotificationSettings(),
   });
 
   final String nick;
@@ -14,6 +45,7 @@ class SlotModel {
   final int lastSeen;
   final Map<String, dynamic>? clientInfo;
   final String? notificationEmail;
+  final OnlineNotificationSettings onlineNotification;
 
   SlotModel copyWith({
     String? nick,
@@ -22,6 +54,7 @@ class SlotModel {
     int? lastSeen,
     Map<String, dynamic>? clientInfo,
     String? notificationEmail,
+    OnlineNotificationSettings? onlineNotification,
   }) {
     return SlotModel(
       nick: nick ?? this.nick,
@@ -30,6 +63,7 @@ class SlotModel {
       lastSeen: lastSeen ?? this.lastSeen,
       clientInfo: clientInfo ?? this.clientInfo,
       notificationEmail: notificationEmail ?? this.notificationEmail,
+      onlineNotification: onlineNotification ?? this.onlineNotification,
     );
   }
 
@@ -43,6 +77,9 @@ class SlotModel {
           ? (json['clientInfo'] as Map).cast<String, dynamic>()
           : null,
       notificationEmail: json['notificationEmail'] as String?,
+      onlineNotification: OnlineNotificationSettings.fromJson(
+        json['onlineNotification'],
+      ),
     );
   }
 
@@ -54,6 +91,7 @@ class SlotModel {
       'lastSeen': lastSeen,
       'clientInfo': clientInfo,
       'notificationEmail': notificationEmail,
+      'onlineNotification': onlineNotification.toJson(),
     };
   }
 }

@@ -81,4 +81,55 @@ async function sendNotificationEmail({
   );
 }
 
-module.exports = {sendNotificationEmail};
+// ---------------------------------------------------------------------------
+// Süreyi okunur metne çevirir (örn. "2 saat 15 dakika").
+// ---------------------------------------------------------------------------
+function formatDuration(ms) {
+  const totalMinutes = Math.max(0, Math.round(ms / 60000));
+  const hours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+  if (hours === 0) return `${minutes} dakika`;
+  if (minutes === 0) return `${hours} saat`;
+  return `${hours} saat ${minutes} dakika`;
+}
+
+// ---------------------------------------------------------------------------
+// "Karşı taraf çevrimiçi oldu" bildirimi — index.js → onSlotOnlineChanged.
+//
+// Parametreler:
+//   channelId      : Firebase kanal adı
+//   channelType    : "real" | "test" — sadece email içeriğini etkiler
+//   onlineNick     : Çevrimiçi olan kişinin nick'i
+//   offlineMs      : Çevrimdışı kaldığı süre (ms)
+//   recipientEmail : Ayarı açan kişinin Profil > Bildirim'deki adresi
+// ---------------------------------------------------------------------------
+async function sendOnlineNotificationEmail({
+  channelId,
+  channelType,
+  onlineNick,
+  offlineMs,
+  recipientEmail,
+}) {
+  const testPrefix = channelType === "test" ? "[TEST] " : "";
+  const duration = formatDuration(offlineMs);
+  const transporter = createTransporter();
+
+  await transporter.sendMail({
+    from: `"Live Chat" <${SENDER_EMAIL}>`,
+    to: recipientEmail,
+    subject: `${testPrefix}${channelId} kanalında ${onlineNick} çevrimiçi oldu`,
+    text:
+      `kanal: ${channelId}\n` +
+      `${onlineNick} yaklaşık ${duration} çevrimdışı kaldıktan sonra çevrimiçi oldu.`,
+    html:
+      `<p><b>${channelId}</b> kanalında <b>${onlineNick}</b>, yaklaşık ` +
+      `${duration} çevrimdışı kaldıktan sonra çevrimiçi oldu.</p>`,
+  });
+
+  console.log(
+      `[NotificationService] Çevrimiçi bildirimi gönderildi → ${recipientEmail} ` +
+    `(kanal: ${channelId}, tip: ${channelType}, nick: ${onlineNick}, süre: ${duration})`,
+  );
+}
+
+module.exports = {sendNotificationEmail, sendOnlineNotificationEmail};

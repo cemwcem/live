@@ -3,6 +3,8 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../../../../core/theme/chat_colors.dart';
+
 class LiveTypingBox extends StatelessWidget {
   const LiveTypingBox({
     super.key,
@@ -558,10 +560,10 @@ class _CursorNickTextFieldState extends State<_CursorNickTextField> {
                     duration: const Duration(milliseconds: 180),
                     child: Text(
                       widget.cursorNick!,
-                      style: const TextStyle(
+                      style: TextStyle(
                         fontSize: 12,
                         fontWeight: FontWeight.w800,
-                        color: Color(0xFF084336),
+                        color: ChatColors.of(context).ownCursorNick,
                       ),
                     ),
                   ),

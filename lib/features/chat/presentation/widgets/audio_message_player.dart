@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../../../core/audio/audio_playback.dart';
+import '../../../../core/theme/chat_colors.dart';
 
 /// Mesaj balonu içinde ses kaydını çalan küçük oynatıcı.
 /// Çalınamazsa (format desteklenmiyor vb.) [onOpenExternally] ile dosya açılır.
@@ -75,7 +76,7 @@ class _AudioMessagePlayerState extends State<AudioMessagePlayer> {
     return Container(
       padding: const EdgeInsets.fromLTRB(2, 2, 10, 2),
       decoration: BoxDecoration(
-        color: Colors.black.withValues(alpha: 0.06),
+        color: ChatColors.of(context).subtle,
         borderRadius: BorderRadius.circular(24),
       ),
       child: Row(
@@ -120,7 +121,7 @@ class _AudioMessagePlayerState extends State<AudioMessagePlayer> {
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
         decoration: BoxDecoration(
-          color: Colors.black.withValues(alpha: 0.06),
+          color: ChatColors.of(context).subtle,
           borderRadius: BorderRadius.circular(10),
         ),
         child: const Row(

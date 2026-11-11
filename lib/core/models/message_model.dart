@@ -49,6 +49,39 @@ class MessageModel {
     fileName: attachmentFileName,
   );
 
+  /// Ekranda gösterilen tüm alanlar aynı mı? Canlı akıştan gelen güncel
+  /// kopyanın yerel kopyanın yerine geçip geçmeyeceğine bununla karar verilir.
+  /// Modele yeni alan eklenirse buraya da eklenmeli.
+  bool hasSameContentAs(MessageModel other) {
+    return senderNick == other.senderNick &&
+        senderSlotId == other.senderSlotId &&
+        text == other.text &&
+        timestamp == other.timestamp &&
+        replyToMessageId == other.replyToMessageId &&
+        replyToSenderNick == other.replyToSenderNick &&
+        replyToText == other.replyToText &&
+        attachmentUrl == other.attachmentUrl &&
+        attachmentStoragePath == other.attachmentStoragePath &&
+        attachmentFileName == other.attachmentFileName &&
+        attachmentMimeType == other.attachmentMimeType &&
+        isViewOnce == other.isViewOnce &&
+        isViewed == other.isViewed &&
+        _sameBoolMap(deliveredSlots, other.deliveredSlots) &&
+        _sameBoolMap(readSlots, other.readSlots);
+  }
+
+  static bool _sameBoolMap(Map<String, bool> a, Map<String, bool> b) {
+    if (a.length != b.length) {
+      return false;
+    }
+    for (final entry in a.entries) {
+      if (b[entry.key] != entry.value) {
+        return false;
+      }
+    }
+    return true;
+  }
+
   MessageModel copyWith({
     String? id,
     String? senderNick,

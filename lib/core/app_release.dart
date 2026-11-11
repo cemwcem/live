@@ -1,7 +1,7 @@
 class AppRelease {
   const AppRelease._();
 
-  static const String name = 'attachment';
-  static const String version = 'v1.0.3b';
-  static const String deployedAt = '2026-11-11 22:15:03';
+  static const String name = 'attachment-darkmode';
+  static const String version = 'v1.0.4';
+  static const String deployedAt = '2026-11-12 01:07:22';
 }

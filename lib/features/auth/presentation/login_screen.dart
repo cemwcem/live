@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/app_release.dart';
+import '../../../core/widgets/double_back_to_exit.dart';
 import '../../chat/presentation/chat_screen.dart';
 import 'login_provider.dart';
 
@@ -69,10 +70,8 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
     final state = ref.watch(loginControllerProvider);
     final controller = ref.read(loginControllerProvider.notifier);
 
-    // Kök ekran: telefonun/tarayıcının geri tuşu uygulamadan çıkıp önceki
-    // web sayfasına gitmesin, ekranda kalınsın.
-    return PopScope(
-      canPop: false,
+    // Kök ekran: geri tuşu ilk basışta uyarı gösterir, ikincide çıkar.
+    return DoubleBackToExit(
       child: Scaffold(
         body: Center(
           child: ConstrainedBox(
@@ -149,7 +148,10 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                         'Release : ${AppRelease.name} (${AppRelease.version})',
                         textAlign: TextAlign.center,
                         style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                          color: Colors.black45,
+                          color: Theme.of(context)
+                              .colorScheme
+                              .onSurface
+                              .withValues(alpha: 0.45),
                           letterSpacing: 0.2,
                         ),
                       ),

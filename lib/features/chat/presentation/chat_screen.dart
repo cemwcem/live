@@ -17,7 +17,9 @@ import '../../profile/presentation/profile_screen.dart';
 import 'emoji_help_screen.dart';
 import 'message_cleanup_screen.dart';
 import 'chat_provider.dart';
+import '../../../core/theme/chat_colors.dart';
 import '../../../core/utils/attachment_types.dart';
+import '../../../core/widgets/double_back_to_exit.dart';
 import 'widgets/audio_message_player.dart';
 import 'widgets/linkified_text.dart';
 import 'widgets/live_typing_box.dart';
@@ -74,6 +76,9 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
   bool _pendingIsViewOnce = false;
   bool _isUploadingAttachment = false;
   final Set<String> _openingViewOnceMessageIds = {};
+  // Resimler varsayılan olarak gizli gelir; kullanıcının bu oturumda
+  // açtığı resimlerin mesaj id'leri (sayfa yenilenince tekrar gizlenir).
+  final Set<String> _expandedImageMessageIds = {};
 
   @override
   void initState() {
@@ -296,17 +301,10 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
         );
         if (existingIndex != -1) {
           final existingMessage = _messageItems[existingIndex];
-          if (existingMessage.senderNick != message.senderNick ||
-              existingMessage.senderSlotId != message.senderSlotId ||
-              existingMessage.text != message.text ||
-              existingMessage.timestamp != message.timestamp ||
-              existingMessage.replyToMessageId != message.replyToMessageId ||
-              existingMessage.replyToSenderNick != message.replyToSenderNick ||
-              existingMessage.replyToText != message.replyToText ||
-              existingMessage.deliveredSlots.toString() !=
-                  message.deliveredSlots.toString() ||
-              existingMessage.readSlots.toString() !=
-                  message.readSlots.toString()) {
+          // Ek dosya / tek seferlik (isViewed) değişiklikleri de dahil tüm
+          // alanlar karşılaştırılır; aksi halde değişiklik sayfa yenilenene
+          // kadar ekrana yansımaz.
+          if (!existingMessage.hasSameContentAs(message)) {
             _messageItems[existingIndex] = message;
             changed = true;
           }
@@ -603,9 +601,9 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
       margin: const EdgeInsets.fromLTRB(16, 4, 16, 0),
       padding: const EdgeInsets.all(10),
       decoration: BoxDecoration(
-        color: const Color(0xFFF1F4F8),
+        color: ChatColors.of(context).otherBubble,
         borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: const Color(0xFFD9E0E8)),
+        border: Border.all(color: ChatColors.of(context).otherBubbleBorder),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -624,7 +622,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
                     : Container(
                         width: 48,
                         height: 48,
-                        color: Colors.black12,
+                        color: ChatColors.of(context).divider,
                         alignment: Alignment.center,
                         child: Icon(
                           AttachmentTypes.isAudio(
@@ -650,7 +648,10 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
                     ),
                     Text(
                       _formatFileSize(bytes.length),
-                      style: const TextStyle(fontSize: 11, color: Colors.black54),
+                      style: TextStyle(
+                        fontSize: 11,
+                        color: ChatColors.of(context).metaText,
+                      ),
                     ),
                   ],
                 ),
@@ -979,7 +980,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
       errorBuilder: (context, error, stackTrace) => Container(
         width: width ?? 220,
         height: height ?? 140,
-        color: Colors.black12,
+        color: ChatColors.of(context).divider,
         alignment: Alignment.center,
         child: const Icon(Icons.broken_image_outlined),
       ),
@@ -1031,6 +1032,19 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
         builder: (context) => _buildImageDialog(context, url),
       );
 
+      // İyimser güncelleme: sunucu cevabını beklemeden yerelde
+      // "görüntülendi" yap ki resim ikinci kez açılamasın.
+      if (mounted) {
+        setState(() {
+          final index = _messageItems.indexWhere((m) => m.id == messageId);
+          if (index != -1) {
+            _messageItems[index] = _messageItems[index].copyWith(
+              isViewed: true,
+            );
+          }
+        });
+      }
+
       await ref
           .read(chatServiceProvider)
           .markAttachmentViewed(
@@ -1064,12 +1078,81 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     await launchUrl(uri, webOnlyWindowName: '_blank');
   }
 
+  void _setImageExpanded(String messageId, bool expanded) {
+    setState(() {
+      if (expanded) {
+        _expandedImageMessageIds.add(messageId);
+      } else {
+        _expandedImageMessageIds.remove(messageId);
+      }
+    });
+  }
+
+  /// Kalıcı resim: varsayılan gizli. "Göster" ile mesaj içinde açılır,
+  /// resme dokununca büyük önizleme açılır, "Gizle" ile tekrar kapanır.
+  Widget _buildCollapsibleImage(MessageModel message) {
+    final url = message.attachmentUrl!;
+    final messageId = message.id ?? url;
+    final isExpanded = _expandedImageMessageIds.contains(messageId);
+    final colors = ChatColors.of(context);
+
+    if (!isExpanded) {
+      return InkWell(
+        borderRadius: BorderRadius.circular(10),
+        onTap: () => _setImageExpanded(messageId, true),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
+          decoration: BoxDecoration(
+            color: colors.subtle,
+            borderRadius: BorderRadius.circular(10),
+          ),
+          child: const Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(Icons.image_outlined, size: 18),
+              SizedBox(width: 8),
+              Text(
+                'Resim — göstermek için dokun',
+                style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
+              ),
+              SizedBox(width: 4),
+              Icon(Icons.expand_more_rounded, size: 20),
+            ],
+          ),
+        ),
+      );
+    }
+
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.center,
+      children: [
+        ClipRRect(
+          borderRadius: BorderRadius.circular(10),
+          child: InkWell(
+            onTap: () => _openNormalImage(url),
+            child: _attachmentImage(url, width: 220, fit: BoxFit.cover),
+          ),
+        ),
+        TextButton.icon(
+          style: TextButton.styleFrom(
+            visualDensity: VisualDensity.compact,
+            foregroundColor: colors.metaText,
+          ),
+          onPressed: () => _setImageExpanded(messageId, false),
+          icon: const Icon(Icons.expand_less_rounded, size: 20),
+          label: const Text('Gizle', style: TextStyle(fontSize: 12)),
+        ),
+      ],
+    );
+  }
+
   Widget _buildAttachmentContent({required MessageModel message}) {
     if (message.isViewOnce && message.isViewed) {
       return Container(
         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
         decoration: BoxDecoration(
-          color: Colors.black12,
+          color: ChatColors.of(context).divider,
           borderRadius: BorderRadius.circular(10),
         ),
         child: Row(
@@ -1091,7 +1174,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
       return Container(
         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
         decoration: BoxDecoration(
-          color: Colors.black.withValues(alpha: 0.06),
+          color: ChatColors.of(context).subtle,
           borderRadius: BorderRadius.circular(10),
         ),
         child: const Row(
@@ -1118,7 +1201,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
         child: Container(
           padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
           decoration: BoxDecoration(
-            color: Colors.black.withValues(alpha: 0.06),
+            color: ChatColors.of(context).subtle,
             borderRadius: BorderRadius.circular(10),
           ),
           child: Row(
@@ -1150,17 +1233,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     }
 
     if (message.isImageAttachment) {
-      return ClipRRect(
-        borderRadius: BorderRadius.circular(10),
-        child: InkWell(
-          onTap: () => _openNormalImage(message.attachmentUrl!),
-          child: _attachmentImage(
-            message.attachmentUrl!,
-            width: 220,
-            fit: BoxFit.cover,
-          ),
-        ),
-      );
+      return _buildCollapsibleImage(message);
     }
 
     return InkWell(
@@ -1169,7 +1242,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
         decoration: BoxDecoration(
-          color: Colors.black.withValues(alpha: 0.06),
+          color: ChatColors.of(context).subtle,
           borderRadius: BorderRadius.circular(10),
         ),
         child: Row(
@@ -1523,6 +1596,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
   Widget build(BuildContext context) {
     final channelState = ref.watch(chatChannelProvider(widget.session));
     final channel = channelState.value;
+    final chatColors = ChatColors.of(context);
     final otherSlotId = widget.session.slotId == 'slot1' ? 'slot2' : 'slot1';
     final ownTypingState = ref.watch(
       chatTypingProvider((
@@ -1751,11 +1825,10 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
       },
     );
 
-    // Kök ekran: telefonun/tarayıcının geri tuşu uygulamadan çıkıp önceki
-    // web sayfasına gitmesin, sohbette kalınsın. (Açık diyalog/menüler ayrı
-    // route olduğu için geri tuşu onları normal şekilde kapatır.)
-    return PopScope(
-      canPop: false,
+    // Kök ekran: geri tuşu ilk basışta uyarı gösterir, ikincide çıkar.
+    // (Açık diyalog/menüler ayrı route olduğu için geri tuşu onları normal
+    // şekilde kapatır.)
+    return DoubleBackToExit(
       child: Scaffold(
       appBar: AppBar(
         title: Row(
@@ -1889,10 +1962,10 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
             onMaxLengthReached: _showMessageLimitWarning,
             showCursorNick: true,
             cursorNick: ownNick,
-            containerColor: const Color(0xFFE9EFF6),
-            inputFillColor: const Color(0xFFF6F9FC),
-            inputBorderColor: const Color(0xFFBCCBDB),
-            inputTextColor: const Color(0xFF3E5A77),
+            containerColor: chatColors.peerBox,
+            inputFillColor: chatColors.peerInputFill,
+            inputBorderColor: chatColors.peerInputBorder,
+            inputTextColor: chatColors.peerInputText,
             onCursorChanged: (offset) {
               _scheduleCursorUpdate(
                 targetSlotId: otherSlotId,
@@ -1906,7 +1979,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
             remoteCursorOffset: showRemoteCursorOnOtherSlot
                 ? otherSlotCursor.offset
                 : null,
-            remoteCursorColor: const Color(0xFF0A4F96),
+            remoteCursorColor: chatColors.remoteCursor,
             helperText: 'Bu alanı sadece $otherNick gönderebilir',
             compact: true,
           ),
@@ -1968,9 +2041,9 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
                               vertical: 4,
                             ),
                             decoration: BoxDecoration(
-                              color: Colors.grey.shade100,
+                              color: chatColors.dayChip,
                               borderRadius: BorderRadius.circular(999),
-                              border: Border.all(color: Colors.black12),
+                              border: Border.all(color: chatColors.dayChipBorder),
                             ),
                             child: Text(
                               _formatDayHeader(messageDate),
@@ -2022,8 +2095,8 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
                                   constraints: const BoxConstraints(maxWidth: 520),
                                   decoration: BoxDecoration(
                                     color: isMine
-                                        ? const Color(0xFFDDF7EA)
-                                        : const Color(0xFFF1F4F8),
+                                        ? chatColors.myBubble
+                                        : chatColors.otherBubble,
                                     borderRadius: BorderRadius.only(
                                       topLeft: const Radius.circular(18),
                                       topRight: const Radius.circular(18),
@@ -2036,8 +2109,8 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
                                     ),
                                     border: Border.all(
                                       color: isMine
-                                          ? const Color(0xFFC5E8D7)
-                                          : const Color(0xFFD9E0E8),
+                                          ? chatColors.myBubbleBorder
+                                          : chatColors.otherBubbleBorder,
                                     ),
                                     boxShadow: [
                                       BoxShadow(
@@ -2069,15 +2142,15 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
                                             ),
                                             decoration: BoxDecoration(
                                               color: isMine
-                                                  ? const Color(0xFFCBEEDC)
-                                                  : const Color(0xFFE6ECF2),
+                                                  ? chatColors.myReply
+                                                  : chatColors.otherReply,
                                               borderRadius: BorderRadius.circular(
                                                 10,
                                               ),
                                               border: Border.all(
                                                 color: isMine
-                                                    ? const Color(0xFFB4DCC8)
-                                                    : const Color(0xFFD3DBE3),
+                                                    ? chatColors.myReplyBorder
+                                                    : chatColors.otherReplyBorder,
                                               ),
                                             ),
                                             child: Column(
@@ -2124,16 +2197,18 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
                                           );
                                           final messageTextStyle = TextStyle(
                                             color: isMine
-                                                ? Colors.black87
-                                                : const Color(0xFF324D67),
+                                                ? chatColors.myText
+                                                : chatColors.otherText,
                                           );
                                           final timeStyle = Theme.of(context)
                                                   .textTheme
                                                   .bodySmall
-                                                  ?.copyWith(color: Colors.black54) ??
-                                              const TextStyle(
+                                                  ?.copyWith(
+                                                    color: chatColors.metaText,
+                                                  ) ??
+                                              TextStyle(
                                                 fontSize: 12,
-                                                color: Colors.black54,
+                                                color: chatColors.metaText,
                                               );
 
                                           final metaWidget = Row(
@@ -2156,6 +2231,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
                                               LinkifiedText(
                                                 text: messageText,
                                                 style: messageTextStyle,
+                                                linkColor: chatColors.link,
                                                 trailing: const [
                                                   WidgetSpan(
                                                     alignment:
@@ -2236,10 +2312,10 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
                   onMaxLengthReached: _showMessageLimitWarning,
                   showCursorNick: true,
                   cursorNick: ownNick,
-                  containerColor: const Color(0xFFEAF8EF),
-                  inputFillColor: const Color(0xFFF8FCF9),
-                  inputBorderColor: const Color(0xFFBFDCCB),
-                  inputTextColor: Colors.black87,
+                  containerColor: chatColors.ownBox,
+                  inputFillColor: chatColors.ownInputFill,
+                  inputBorderColor: chatColors.ownInputBorder,
+                  inputTextColor: chatColors.ownInputText,
                   onCursorChanged: (offset) {
                     _scheduleCursorUpdate(
                       targetSlotId: widget.session.slotId,
@@ -2253,7 +2329,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
                   remoteCursorOffset: showRemoteCursorOnOwnSlot
                       ? ownSlotCursor.offset
                       : null,
-                  remoteCursorColor: const Color(0xFF0A4F96),
+                  remoteCursorColor: chatColors.remoteCursor,
                   helperText: 'Mesajı yalnızca kendi alanından gönderebilirsin',
                   compact: true,
                   replyPreviewNick: _replyTarget?.senderNick,

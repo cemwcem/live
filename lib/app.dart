@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'core/firebase/firebase_service.dart';
+import 'core/theme/chat_colors.dart';
 import 'core/theme/theme_provider.dart';
 import 'core/utils/session_storage.dart';
 import 'features/auth/domain/auth_service.dart';
@@ -45,6 +46,7 @@ class LiveChatApp extends ConsumerWidget {
           brightness: Brightness.light,
         ),
         useMaterial3: true,
+        extensions: const [ChatColors.light],
       ),
       darkTheme: ThemeData(
         colorScheme: ColorScheme.fromSeed(
@@ -52,6 +54,7 @@ class LiveChatApp extends ConsumerWidget {
           brightness: Brightness.dark,
         ),
         useMaterial3: true,
+        extensions: const [ChatColors.dark],
       ),
       themeMode: themeMode,
       home: bootstrapState.when(

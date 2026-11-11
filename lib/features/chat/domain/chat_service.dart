@@ -224,6 +224,18 @@ class ChatService {
     );
   }
 
+  Future<void> setOnlineNotification({
+    required String channelName,
+    required String slotId,
+    required OnlineNotificationSettings settings,
+  }) {
+    return _repository.setOnlineNotification(
+      channelName: channelName,
+      slotId: slotId,
+      settings: settings,
+    );
+  }
+
   Stream<String?> watchTyping({
     required String channelName,
     required String slotId,

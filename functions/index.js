@@ -22,12 +22,15 @@
  */
 
 const {setGlobalOptions} = require("firebase-functions");
-const {onValueCreated} = require("firebase-functions/v2/database");
+const {onValueCreated, onValueWritten} = require("firebase-functions/v2/database");
 const {logger} = require("firebase-functions");
 const admin = require("firebase-admin");
 
-const {THRESHOLDS} = require("./config");
-const {sendNotificationEmail} = require("./notificationService");
+const {THRESHOLDS, ONLINE_DEFAULT_HOURS, ONLINE_TEST_DIVISOR} = require("./config");
+const {
+  sendNotificationEmail,
+  sendOnlineNotificationEmail,
+} = require("./notificationService");
 
 admin.initializeApp();
 
@@ -144,6 +147,113 @@ exports.onNewMessage = onValueCreated(
       // --- Duplicate önleme damgası ---
       // Fonksiyon yeniden denense bile aynı mesaj için email tekrar gitmez.
       await event.data.ref.child("notifiedAt").set(Date.now());
+
+      return null;
+    },
+);
+
+// ---------------------------------------------------------------------------
+// Çevrimiçi bildirimi
+// Trigger: /channels/{channelId}/slots/{slotId}/online — her yazımda
+//
+// Akış:
+//   1. online true → false: slot'a offlineAt (çevrimdışı olma anı) yazılır.
+//      (lastSeen kullanılamaz: çevrimiçi olurken aynı update ile "şimdi"ye
+//      çekildiği için çevrimdışı kalma süresi kaybolur.)
+//   2. online false → true: karşı slot'un onlineNotification ayarı okunur.
+//      Ayar açık (enabled: true), bildirim adresi kayıtlı ve çevrimdışı
+//      kalma süresi seçilen saatten uzunsa (test kanalında 1/20'si) karşı
+//      tarafa email gönderilir (ayarı açan kişi o an çevrimiçi olsa bile).
+// ---------------------------------------------------------------------------
+exports.onSlotOnlineChanged = onValueWritten(
+    "/channels/{channelId}/slots/{slotId}/online",
+    async (event) => {
+      const {channelId, slotId} = event.params;
+      if (slotId !== "slot1" && slotId !== "slot2") {
+        return null;
+      }
+
+      const wasOnline = event.data.before.val() === true;
+      const isOnline = event.data.after.val() === true;
+      if (wasOnline === isOnline) {
+        return null;
+      }
+
+      const db = admin.database();
+      const slotRef = db.ref(`/channels/${channelId}/slots/${slotId}`);
+      const now = Date.now();
+
+      // --- Çevrimdışı oldu: anı kaydet ---
+      if (!isOnline) {
+        await slotRef.child("offlineAt").set(now);
+        return null;
+      }
+
+      // --- Çevrimiçi oldu ---
+      const slotSnap = await slotRef.get();
+      const slot = slotSnap.val() || {};
+      const offlineAt = slot.offlineAt;
+      if (typeof offlineAt !== "number") {
+        logger.info(`[${channelId}/${slotId}] offlineAt yok (ilk giriş?), atlanıyor.`);
+        return null;
+      }
+
+      const watcherSlotId = slotId === "slot1" ? "slot2" : "slot1";
+      const watcherSnap = await db
+          .ref(`/channels/${channelId}/slots/${watcherSlotId}`)
+          .get();
+      const watcher = watcherSnap.val() || {};
+      const settings = watcher.onlineNotification || {};
+
+      // Varsayılan pasif: kullanıcı işaretlemediyse hiçbir şey yapılmaz.
+      if (settings.enabled !== true) {
+        return null;
+      }
+
+      const recipientEmail = watcher.notificationEmail;
+      if (!recipientEmail) {
+        logger.info(
+            `[${channelId}] ${watcherSlotId} çevrimiçi bildirimi açık ama ` +
+          `bildirim email adresi yok, atlanıyor.`,
+        );
+        return null;
+      }
+
+
+      const hours = Number(settings.hours) > 0 ?
+        Number(settings.hours) :
+        ONLINE_DEFAULT_HOURS;
+      const channelType = resolveChannelType(channelId);
+      const thresholdMs = (hours * 60 * 60 * 1000) /
+        (channelType === "test" ? ONLINE_TEST_DIVISOR : 1);
+      const offlineMs = now - offlineAt;
+
+      if (offlineMs < thresholdMs) {
+        logger.info(
+            `[${channelId}/${slotId}] Çevrimdışı süre eşiğin altında ` +
+          `(${Math.round(offlineMs / 1000)}s < ${Math.round(thresholdMs / 1000)}s), atlanıyor.`,
+        );
+        return null;
+      }
+
+      const onlineNick = slot.nick || slotId;
+      logger.info(
+          `[${channelId}] Çevrimiçi bildirimi tetiklendi → ${onlineNick} ` +
+        `${Math.round(offlineMs / 1000)}s sonra geldi, alıcı: ${recipientEmail}`,
+      );
+
+      await sendOnlineNotificationEmail({
+        channelId,
+        channelType,
+        onlineNick,
+        offlineMs,
+        recipientEmail,
+      });
+
+      // Bilgi amaçlı: son bildirim zamanı (Firebase'den kontrol edilebilir).
+      await db
+          .ref(`/channels/${channelId}/slots/${watcherSlotId}/onlineNotification/lastNotifiedAt`)
+          .set(now);
 
       return null;
     },
