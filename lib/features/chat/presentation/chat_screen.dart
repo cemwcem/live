@@ -17,6 +17,9 @@ import '../../profile/presentation/profile_screen.dart';
 import 'emoji_help_screen.dart';
 import 'message_cleanup_screen.dart';
 import 'chat_provider.dart';
+import '../../../core/utils/attachment_types.dart';
+import 'widgets/audio_message_player.dart';
+import 'widgets/linkified_text.dart';
 import 'widgets/live_typing_box.dart';
 
 class ChatScreen extends ConsumerStatefulWidget {
@@ -519,27 +522,6 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     return mimeType != null && mimeType.startsWith('image/');
   }
 
-  String _guessMimeType(String fileName) {
-    final extension = fileName.contains('.') ? fileName.split('.').last.toLowerCase() : '';
-    switch (extension) {
-      case 'jpg':
-      case 'jpeg':
-        return 'image/jpeg';
-      case 'png':
-        return 'image/png';
-      case 'gif':
-        return 'image/gif';
-      case 'webp':
-        return 'image/webp';
-      case 'bmp':
-        return 'image/bmp';
-      case 'pdf':
-        return 'application/pdf';
-      default:
-        return 'application/octet-stream';
-    }
-  }
-
   String _formatFileSize(int bytes) {
     if (bytes < 1024) {
       return '$bytes B';
@@ -563,6 +545,20 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
   }
 
   Future<void> _pickAttachment() async {
+    try {
+      await _pickAttachmentInternal();
+    } catch (error, stackTrace) {
+      debugPrint('Attachment pick failed: $error\n$stackTrace');
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Dosya seçilemedi: $error')),
+      );
+    }
+  }
+
+  Future<void> _pickAttachmentInternal() async {
     final file = await FilePicker.pickFile();
     if (file == null || !mounted) {
       return;
@@ -591,7 +587,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     setState(() {
       _pendingAttachmentBytes = bytes;
       _pendingAttachmentFileName = file.name;
-      _pendingAttachmentMimeType = _guessMimeType(file.name);
+      _pendingAttachmentMimeType = AttachmentTypes.guessMimeType(file.name);
       _pendingIsViewOnce = false;
     });
   }
@@ -630,7 +626,14 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
                         height: 48,
                         color: Colors.black12,
                         alignment: Alignment.center,
-                        child: const Icon(Icons.insert_drive_file_outlined),
+                        child: Icon(
+                          AttachmentTypes.isAudio(
+                                mimeType: _pendingAttachmentMimeType,
+                                fileName: _pendingAttachmentFileName,
+                              )
+                              ? Icons.audiotrack_rounded
+                              : Icons.insert_drive_file_outlined,
+                        ),
                       ),
               ),
               const SizedBox(width: 10),
@@ -739,7 +742,8 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
             attachmentMimeType: hasAttachment ? attachmentMimeType : null,
             isViewOnce: hasAttachment && isViewOnce,
           );
-    } catch (_) {
+    } catch (error, stackTrace) {
+      debugPrint('Send failed (attachment: $hasAttachment): $error\n$stackTrace');
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
@@ -958,10 +962,56 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     }
   }
 
+  /// Storage indirme linkleri CORS başlığı döndürmediği için web'de resim
+  /// `<img>` elementiyle gösterilir (CORS gerektirmez). Hata halinde ikon gösterir.
+  Widget _attachmentImage(
+    String url, {
+    double? width,
+    double? height,
+    BoxFit fit = BoxFit.contain,
+  }) {
+    return Image.network(
+      url,
+      width: width,
+      height: height,
+      fit: fit,
+      webHtmlElementStrategy: WebHtmlElementStrategy.prefer,
+      errorBuilder: (context, error, stackTrace) => Container(
+        width: width ?? 220,
+        height: height ?? 140,
+        color: Colors.black12,
+        alignment: Alignment.center,
+        child: const Icon(Icons.broken_image_outlined),
+      ),
+    );
+  }
+
+  Widget _buildImageDialog(BuildContext context, String url) {
+    return Dialog(
+      backgroundColor: Colors.black,
+      insetPadding: const EdgeInsets.all(16),
+      child: Stack(
+        alignment: Alignment.topRight,
+        children: [
+          InteractiveViewer(child: _attachmentImage(url)),
+          IconButton(
+            icon: const Icon(Icons.close, color: Colors.white),
+            onPressed: () => Navigator.of(context).pop(),
+          ),
+        ],
+      ),
+    );
+  }
+
   Future<void> _openViewOnceImage(MessageModel message) async {
     final messageId = message.id;
     final url = message.attachmentUrl;
     if (messageId == null || url == null || url.isEmpty) {
+      return;
+    }
+    // Gönderen kendi tek seferlik resmini açamaz; açarsa dosya silinip
+    // karşı taraf için "görüntülendi" olarak işaretlenirdi.
+    if (message.senderNick == widget.session.nick) {
       return;
     }
     if (_openingViewOnceMessageIds.contains(messageId)) {
@@ -978,24 +1028,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
       }
       await showDialog<void>(
         context: context,
-        builder: (context) {
-          return Dialog(
-            backgroundColor: Colors.black,
-            insetPadding: const EdgeInsets.all(16),
-            child: Stack(
-              alignment: Alignment.topRight,
-              children: [
-                InteractiveViewer(
-                  child: Image.network(url, fit: BoxFit.contain),
-                ),
-                IconButton(
-                  icon: const Icon(Icons.close, color: Colors.white),
-                  onPressed: () => Navigator.of(context).pop(),
-                ),
-              ],
-            ),
-          );
-        },
+        builder: (context) => _buildImageDialog(context, url),
       );
 
       await ref
@@ -1019,24 +1052,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     }
     await showDialog<void>(
       context: context,
-      builder: (context) {
-        return Dialog(
-          backgroundColor: Colors.black,
-          insetPadding: const EdgeInsets.all(16),
-          child: Stack(
-            alignment: Alignment.topRight,
-            children: [
-              InteractiveViewer(
-                child: Image.network(url, fit: BoxFit.contain),
-              ),
-              IconButton(
-                icon: const Icon(Icons.close, color: Colors.white),
-                onPressed: () => Navigator.of(context).pop(),
-              ),
-            ],
-          ),
-        );
-      },
+      builder: (context) => _buildImageDialog(context, url),
     );
   }
 
@@ -1069,6 +1085,27 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
 
     if (!message.hasAttachment) {
       return const SizedBox.shrink();
+    }
+
+    if (message.isViewOnce && message.senderNick == widget.session.nick) {
+      return Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
+        decoration: BoxDecoration(
+          color: Colors.black.withValues(alpha: 0.06),
+          borderRadius: BorderRadius.circular(10),
+        ),
+        child: const Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.visibility_outlined, size: 18),
+            SizedBox(width: 8),
+            Text(
+              'Tek seferlik resim gönderildi',
+              style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
+            ),
+          ],
+        ),
+      );
     }
 
     if (message.isViewOnce) {
@@ -1105,22 +1142,22 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
       );
     }
 
+    if (message.isAudioAttachment) {
+      return AudioMessagePlayer(
+        url: message.attachmentUrl!,
+        onOpenExternally: () => _openAttachmentFile(message.attachmentUrl!),
+      );
+    }
+
     if (message.isImageAttachment) {
       return ClipRRect(
         borderRadius: BorderRadius.circular(10),
         child: InkWell(
           onTap: () => _openNormalImage(message.attachmentUrl!),
-          child: Image.network(
+          child: _attachmentImage(
             message.attachmentUrl!,
             width: 220,
             fit: BoxFit.cover,
-            errorBuilder: (context, error, stackTrace) => Container(
-              width: 220,
-              height: 140,
-              color: Colors.black12,
-              alignment: Alignment.center,
-              child: const Icon(Icons.broken_image_outlined),
-            ),
           ),
         ),
       );
@@ -1714,7 +1751,12 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
       },
     );
 
-    return Scaffold(
+    // Kök ekran: telefonun/tarayıcının geri tuşu uygulamadan çıkıp önceki
+    // web sayfasına gitmesin, sohbette kalınsın. (Açık diyalog/menüler ayrı
+    // route olduğu için geri tuşu onları normal şekilde kapatır.)
+    return PopScope(
+      canPop: false,
+      child: Scaffold(
       appBar: AppBar(
         title: Row(
           children: [
@@ -2111,21 +2153,19 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
 
                                           return Stack(
                                             children: [
-                                              Text.rich(
-                                                TextSpan(
-                                                  style: messageTextStyle,
-                                                  children: [
-                                                    TextSpan(text: messageText),
-                                                    const WidgetSpan(
-                                                      alignment:
-                                                          PlaceholderAlignment.middle,
-                                                      child: SizedBox(
-                                                        width: 72,
-                                                        height: 20,
-                                                      ),
+                                              LinkifiedText(
+                                                text: messageText,
+                                                style: messageTextStyle,
+                                                trailing: const [
+                                                  WidgetSpan(
+                                                    alignment:
+                                                        PlaceholderAlignment.middle,
+                                                    child: SizedBox(
+                                                      width: 72,
+                                                      height: 20,
                                                     ),
-                                                  ],
-                                                ),
+                                                  ),
+                                                ],
                                               ),
                                               Positioned(
                                                 bottom: 0,
@@ -2255,6 +2295,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
             ),
           ),
         ],
+      ),
       ),
     );
   }

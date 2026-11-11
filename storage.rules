@@ -5,7 +5,10 @@ service firebase.storage {
     // Sohbet dosya/resim ekleri. Boyut sınırı Flutter tarafındaki
     // _maxAttachmentBytes (10 MB) ile aynı tutulmalı.
     match /channel_attachments/{channelName}/{fileName} {
-      allow read, write: if request.auth != null
+      // Not: request.resource sadece yazmada dolu; okumada null olduğu için
+      // boyut kontrolü yalnızca create/update kuralında yer almalı.
+      allow read: if request.auth != null;
+      allow create, update: if request.auth != null
         && request.resource.size < 10 * 1024 * 1024;
       allow delete: if request.auth != null;
     }

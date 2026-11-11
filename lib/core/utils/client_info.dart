@@ -4,6 +4,8 @@ import 'package:device_info_plus/device_info_plus.dart';
 import 'package:flutter/foundation.dart';
 
 import '../app_release.dart';
+import 'browser_hints.dart';
+import 'user_agent_parser.dart';
 
 class ClientInfo {
   const ClientInfo._();
@@ -23,10 +25,29 @@ class ClientInfo {
     try {
       if (kIsWeb) {
         final web = await plugin.webBrowserInfo;
+        final userAgent = web.userAgent ?? '';
         info['browserName'] = web.browserName.name;
-        info['userAgent'] = web.userAgent ?? '';
+        info['userAgent'] = userAgent;
         info['webPlatform'] = web.platform ?? '';
         info['vendor'] = web.vendor ?? '';
+        // os, osVersion, browser, browserVersion, deviceType, deviceModel
+        info.addAll(
+          UserAgentParser.parse(
+            userAgent,
+            maxTouchPoints: web.maxTouchPoints ?? 0,
+          ),
+        );
+        _putIfPresent(info, 'language', web.language);
+        _putIfPresent(info, 'cpuCores', web.hardwareConcurrency);
+        _putIfPresent(info, 'deviceMemoryGb', web.deviceMemory);
+        _putIfPresent(info, 'maxTouchPoints', web.maxTouchPoints);
+        // screen, pixelRatio, timeZone, (Chromium'da) uaModel/uaPlatform
+        final hints = await collectBrowserHints();
+        info.addAll(hints);
+        final uaModel = hints['uaModel'];
+        if (uaModel is String && uaModel.isNotEmpty) {
+          info['deviceModel'] = uaModel;
+        }
       } else if (Platform.isAndroid) {
         final android = await plugin.androidInfo;
         info['deviceModel'] = android.model;
@@ -51,11 +72,17 @@ class ClientInfo {
         info['macOsVersion'] = mac.osRelease;
         info['model'] = mac.model;
       }
-    } catch (_) {
-      info['clientInfoError'] = 'collect_failed';
+    } catch (error) {
+      info['clientInfoError'] = 'collect_failed: $error';
     }
 
     return info;
+  }
+
+  static void _putIfPresent(Map<String, dynamic> info, String key, Object? value) {
+    if (value != null && value.toString().isNotEmpty) {
+      info[key] = value;
+    }
   }
 
   static String _platformName() {

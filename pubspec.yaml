@@ -43,6 +43,7 @@ dependencies:
   device_info_plus: any
   file_picker: any
   url_launcher: any
+  web: ^1.1.1
 
 dev_dependencies:
   flutter_test:

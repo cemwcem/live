@@ -1,3 +1,5 @@
+import 'url_detector.dart';
+
 class EmojiEntry {
   const EmojiEntry({
     required this.code,
@@ -40,7 +42,21 @@ class EmojiShortcodes {
     return filtered;
   }
 
+  /// Kısa kodları emojiye çevirir; web adreslerine dokunmaz
+  /// (ör. "https://" içindeki ":/" 😕 olmaz).
   static String emojify(String text) {
+    final buffer = StringBuffer();
+    var lastEnd = 0;
+    for (final match in UrlDetector.typingPattern.allMatches(text)) {
+      buffer.write(_replaceCodes(text.substring(lastEnd, match.start)));
+      buffer.write(match.group(0));
+      lastEnd = match.end;
+    }
+    buffer.write(_replaceCodes(text.substring(lastEnd)));
+    return buffer.toString();
+  }
+
+  static String _replaceCodes(String text) {
     var result = text;
     for (final entry in entries) {
       result = result.replaceAll(entry.code, entry.emoji);

@@ -1,3 +1,5 @@
+import '../utils/attachment_types.dart';
+
 class MessageModel {
   const MessageModel({
     required this.id,
@@ -42,6 +44,10 @@ class MessageModel {
   bool get hasAttachment => attachmentUrl != null && attachmentUrl!.isNotEmpty;
   bool get isImageAttachment =>
       attachmentMimeType != null && attachmentMimeType!.startsWith('image/');
+  bool get isAudioAttachment => AttachmentTypes.isAudio(
+    mimeType: attachmentMimeType,
+    fileName: attachmentFileName,
+  );
 
   MessageModel copyWith({
     String? id,
